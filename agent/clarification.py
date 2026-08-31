@@ -50,6 +50,34 @@ class ClarificationPolicy:
             "Accessories",
         ]
 
+    def suggest(
+        self,
+        state: SessionState,
+        intent: str,
+        hard: dict,
+        soft: dict,
+        negative: dict,
+    ) -> Optional[str]:
+        """Return a conservative clarification attribute, or None.
+
+        Unlike :meth:`decide`, this is meant to be embedded in Member A's
+        intent result. It only asks when the request is genuinely vague or
+        self-conflicting, so a concrete request still lets the orchestrator
+        return ranked results immediately.
+        """
+        for key in hard:
+            if key in negative:
+                return key
+
+        if intent == INTENT_BROWSING:
+            if not soft.get("use_case") and not soft.get("feature") and not hard.get("style"):
+                return "style"
+            return None
+
+        if not hard.get("category") and not hard.get("brand"):
+            return "category"
+        return None
+
     def decide(
         self,
         state: SessionState,
