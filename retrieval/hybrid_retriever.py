@@ -10,7 +10,7 @@ from shopping_copilot.contracts import RetrievalResult, SessionState
 
 class HybridRetriever:
 
-    def __init__(self, catalog: ProductCatalog, *, use_semantic: bool = True):
+    def __init__(self, catalog: ProductCatalog, *, use_semantic: bool = False):
         self.use_semantic = bool(use_semantic)
 
         self.catalog = catalog

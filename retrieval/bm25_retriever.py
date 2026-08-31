@@ -1,11 +1,12 @@
 import re
 import math
 import heapq
+from collections import Counter, defaultdict
 from typing import List, Tuple
 
 try:
     from rank_bm25 import BM25Okapi
-except ImportError:  # pragma: no cover - exercised in dependency-free runs
+except ImportError:  # pragma: no cover - optional compatibility export
     BM25Okapi = None
 
 from data.catalog_loader import Product, ProductCatalog
@@ -18,6 +19,11 @@ class BM25Retriever:
         self.products: List[Product] = []
         self.tokenized_corpus = []
         self.bm25 = None
+        self._term_counts: list[Counter[str]] = []
+        self._postings: dict[str, list[int]] = defaultdict(list)
+        self._idf: dict[str, float] = {}
+        self._document_lengths: list[int] = []
+        self._average_length = 0.0
 
     def _tokenize(self, text: str) -> List[str]:
         """
@@ -63,8 +69,24 @@ class BM25Retriever:
             tokens = self._tokenize(text)
 
             self.tokenized_corpus.append(tokens)
-
-        self.bm25 = BM25Okapi(self.tokenized_corpus) if BM25Okapi else None
+        self._term_counts = []
+        self._postings = defaultdict(list)
+        self._document_lengths = []
+        for index, tokens in enumerate(self.tokenized_corpus):
+            counts = Counter(tokens)
+            self._term_counts.append(counts)
+            self._document_lengths.append(len(tokens))
+            for token in counts:
+                self._postings[token].append(index)
+        self._average_length = sum(self._document_lengths) / max(1, len(self._document_lengths))
+        document_count = len(self.tokenized_corpus)
+        self._idf = {
+            token: math.log(1.0 + (document_count - len(indices) + 0.5) / (len(indices) + 0.5))
+            for token, indices in self._postings.items()
+        }
+        # The custom scorer avoids allocating a 50,000-element score array on
+        # every turn while retaining the standard BM25 ranking formula.
+        self.bm25 = None
 
     def search(
         self,
@@ -90,35 +112,33 @@ class BM25Retriever:
         if not query_tokens:
             return []
 
-        if self.bm25 is not None:
-            scores = self.bm25.get_scores(query_tokens)
-        else:
-            query_set = set(query_tokens)
-            document_frequency = {
-                token: sum(token in document for document in self.tokenized_corpus)
-                for token in query_set
-            }
-            scores = []
-            for document in self.tokenized_corpus:
-                overlap = set(document) & query_set
-                score = sum(
-                    math.log((1 + len(self.tokenized_corpus)) / (1 + document_frequency[token]))
-                    for token in overlap
-                )
-                scores.append(float(score))
-
-        eligible = (
-            range(len(scores))
-            if allowed_ids is None
-            else (
+        query_terms = set(query_tokens)
+        candidate_indices = {
+            index for token in query_terms for index in self._postings.get(token, ())
+        }
+        if allowed_ids is not None:
+            candidate_indices = {
                 index
-                for index, product in enumerate(self.products)
-                if product.parent_asin in allowed_ids
-            )
-        )
-        ranked_indices = heapq.nlargest(
-            max(0, int(top_k)), eligible, key=lambda index: float(scores[index])
-        )
+                for index in candidate_indices
+                if self.products[index].parent_asin in allowed_ids
+            }
+        k1, b = 1.5, 0.75
+        scored: list[tuple[int, float]] = []
+        for index in candidate_indices:
+            counts = self._term_counts[index]
+            length = self._document_lengths[index]
+            score = 0.0
+            for token in query_terms:
+                frequency = counts.get(token, 0)
+                if not frequency:
+                    continue
+                denominator = frequency + k1 * (
+                    1.0 - b + b * length / max(1.0, self._average_length)
+                )
+                score += self._idf.get(token, 0.0) * frequency * (k1 + 1.0) / denominator
+            scored.append((index, score))
+        ranked_indices = [index for index, _ in heapq.nlargest(max(0, int(top_k)), scored, key=lambda item: item[1])]
+        score_by_index = dict(scored)
 
         results = []
 
@@ -129,7 +149,7 @@ class BM25Retriever:
             results.append(
                 (
                     product,
-                    float(scores[index])
+                    float(score_by_index[index])
                 )
             )
 

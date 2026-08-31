@@ -10,13 +10,14 @@ from agent.intent_router import IntentRouter
 from ranking.rule_ranker import RuleRanker
 from retrieval.hybrid_retriever import HybridRetriever
 from shopping_copilot.catalog import ProductCatalog, SQLiteCatalogRetriever
+from shopping_copilot.llm_ranker import LLMRanker
 from shopping_copilot.orchestrator import ShoppingOrchestrator
 from shopping_copilot.policies import ScoreRanker
 from shopping_copilot.trace import NullTraceSink
 
 
 class Agent:
-    """Wire Member A, Member B, and the C lifecycle into one Agent."""
+    """Wire intent understanding, retrieval, ranking, and lifecycle logic."""
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
         self.catalog_path = Path(catalog_path)
@@ -25,15 +26,15 @@ class Agent:
         self.using_fallback = False
 
         try:
-            # Keep the default entry point lightweight and deterministic for
-            # the official evaluator. Member B's indexed path remains
-            # available for local benchmarking through an explicit opt-in.
-            if os.getenv("SHOPPING_COPILOT_USE_B_RETRIEVAL", "0").lower() not in {
-                "1",
-                "true",
-                "yes",
-            }:
-                raise RuntimeError("B retrieval is disabled by default")
+            retrieval_mode = os.getenv("SHOPPING_COPILOT_RETRIEVAL_MODE", "hybrid").lower()
+            enable_bm25 = os.getenv("SHOPPING_COPILOT_ENABLE_BM25", "1").lower() in {
+                "1", "true", "yes"
+            }
+            enable_tfidf = os.getenv("SHOPPING_COPILOT_ENABLE_TFIDF", "0").lower() in {
+                "1", "true", "yes"
+            }
+            if retrieval_mode != "hybrid" or not enable_bm25:
+                raise RuntimeError("SQLite retrieval mode requested")
             if os.getenv("SHOPPING_COPILOT_FORCE_FALLBACK", "0").lower() in {
                 "1",
                 "true",
@@ -47,15 +48,12 @@ class Agent:
                 raise RuntimeError("the BM25 dependency is unavailable")
             self.catalog = ProductCatalog(self.catalog_path)
             router = IntentRouter()
-            use_semantic = os.getenv("SHOPPING_COPILOT_USE_SEMANTIC", "0").lower() in {
-                "1",
-                "true",
-                "yes",
-            }
-            if use_semantic and TfidfVectorizer is None:
+            if enable_tfidf and TfidfVectorizer is None:
                 raise RuntimeError("the semantic retrieval dependency is unavailable")
-            retriever = HybridRetriever(self.catalog, use_semantic=use_semantic)
+            retriever = HybridRetriever(self.catalog, use_semantic=enable_tfidf)
             ranker = RuleRanker()
+            if os.getenv("SHOPPING_COPILOT_ENABLE_LLM", "0").lower() in {"1", "true", "yes"}:
+                ranker = LLMRanker(ranker)
         except Exception:
             # The official environment may not install optional scientific
             # packages. Keep the same Agent contract with the SQLite baseline.

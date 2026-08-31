@@ -1,4 +1,4 @@
-"""Command-line entry point for local Track 4 evaluation."""
+"""Internal compatibility wrapper around the official evaluator."""
 
 from __future__ import annotations
 
