@@ -14,7 +14,7 @@ def main() -> None:
     parser.add_argument("--root", default=".", help="participant-kit/project root")
     parser.add_argument("--catalog", default="data/catalog.jsonl")
     parser.add_argument("--dataset", default="data/public_set.jsonl")
-    parser.add_argument("--output", default="results.json")
+    parser.add_argument("--output", default="results/results.json")
     args = parser.parse_args()
     report = run_official_evaluator(
         project_root=Path(args.root),

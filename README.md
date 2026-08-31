@@ -83,12 +83,13 @@ $env:SHOPPING_COPILOT_USE_B_RETRIEVAL='0'
 & $py -m evaluator.local_evaluator `
   --catalog data/catalog.jsonl `
   --dataset data/public_set.jsonl `
-  --output results.json
+  --output results/results.json
 ```
 
 On PowerShell, use backticks for line continuation (or put the command on one
 line). This invokes the same public `Agent.reset`/`Agent.respond` contract used
-by the judge.
+by the judge. Evaluation reports are written under `results\` by default; the
+directory is ignored by Git so local reports never pollute the repository root.
 
 The equivalent C-module wrapper is:
 
@@ -97,7 +98,7 @@ python -m evaluation.run \
   --root . \
   --catalog data/catalog.jsonl \
   --dataset data/public_set.jsonl \
-  --output results.json
+  --output results/results.json
 ```
 
 The evaluator is the source of truth for scoring.  It calls:
