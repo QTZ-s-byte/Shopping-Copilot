@@ -268,19 +268,37 @@ class ShoppingOrchestrator:
         return self._normalize_intent(self._coerce_intent(value), state), retries
 
     @staticmethod
-    def _normalize_intent(result: IntentResult, state: SessionState) -> IntentResult:
-        """Convert the shared A result into explicit C state operations."""
+    def _normalize_intent(
+        result: IntentResult,
+        state: SessionState,
+    ) -> IntentResult:
+        """Convert shared A output into explicit C state operations.
+
+        An override should replace fields explicitly identified by the router.
+        It must not implicitly delete unrelated existing constraints.
+        """
 
         if not result.override:
             return result
-        incoming = set(result.hard_constraints) | set(result.soft_preferences) | set(result.negative_constraints)
-        existing = set(state.hard_constraints) | set(state.soft_preferences) | set(state.negative_constraints)
-        remove_fields = tuple(sorted(existing - incoming))
+
         replace_fields = {
             **dict(result.hard_constraints),
             **dict(result.soft_preferences),
             **dict(result.negative_constraints),
         }
+
+        explicit_remove = set(
+            str(field) for field in result.remove_fields
+        )
+
+        # If the router explicitly requests a field removal, honor it.
+        # Do not infer removals from "fields absent from the new message":
+        # an override such as "ignore my earlier preference; I need leather"
+        # is intended to replace the preference while keeping the product goal.
+        remove_fields = tuple(
+            sorted(explicit_remove)
+        )
+
         return IntentResult(
             intent=result.intent,
             confidence=result.confidence,
