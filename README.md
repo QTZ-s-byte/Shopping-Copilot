@@ -170,7 +170,39 @@ $env:SHOPPING_COPILOT_ENABLE_TFIDF='0'
 ```
 
 Semantic retrieval is intentionally opt-in because it consumes substantially
-more memory on the 50,000-item catalog. Clear the variables when finished:
+more memory on the 50,000-item catalog.
+
+## Optional DeepSeek reranking
+
+DeepSeek integration uses the official OpenAI-compatible Chat Completions
+endpoint. Copy the committed template to the ignored local `.env` file:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Then edit only the following line in `.env` and keep the key local:
+
+```dotenv
+DEEPSEEK_API_KEY=replace-with-your-private-key
+```
+
+The template is otherwise ready for the 200-session run. It enables hybrid
+BM25 retrieval, disables TF-IDF, enables DeepSeek reranking, and uses:
+
+```dotenv
+DEEPSEEK_BASE_URL=https://api.deepseek.com/chat/completions
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_TIMEOUT_SECONDS=30
+DEEPSEEK_MAX_CALLS_PER_SESSION=1
+```
+
+The one-call-per-session limit caps the public evaluation at 200 attempted API
+calls. DeepSeek token usage is copied into the official response `usage`
+field. API failures preserve the deterministic local ranking order. The `.env`
+file is ignored by Git and must never be committed or pasted into logs.
+
+Clear shell-level overrides when finished:
 
 ```powershell
 Remove-Item Env:SHOPPING_COPILOT_RETRIEVAL_MODE -ErrorAction SilentlyContinue

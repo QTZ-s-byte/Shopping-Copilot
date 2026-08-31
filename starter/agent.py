@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 from agent.intent_router import IntentRouter
 from ranking.rule_ranker import RuleRanker
 from retrieval.hybrid_retriever import HybridRetriever
@@ -20,6 +22,7 @@ class Agent:
     """Wire intent understanding, retrieval, ranking, and lifecycle logic."""
 
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
+        load_dotenv()
         self.catalog_path = Path(catalog_path)
         self.fallback_catalog = None
         self.catalog = None

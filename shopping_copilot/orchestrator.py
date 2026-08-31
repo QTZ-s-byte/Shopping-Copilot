@@ -143,6 +143,7 @@ class ShoppingOrchestrator:
             retrieval_total: int | None = None
             ranked: list[Candidate] = []
             ask_attribute: str | None = None
+            turn_usage = {"prompt_tokens": 0, "completion_tokens": 0}
 
             try:
                 try:
@@ -186,6 +187,7 @@ class ShoppingOrchestrator:
                         ranked_values, retries = self._run_ranker(query, candidates, state)
                         retry_counts["ranker"] = retries
                         ranked = self._sanitize_candidates(ranked_values)
+                        turn_usage = self._consume_ranker_usage()
                     except Exception as exc:  # noqa: BLE001 - plugin boundary
                         stage_errors.append(self._error_info("ranker", exc))
                         fallback_stages.append("ranker")
@@ -204,6 +206,7 @@ class ShoppingOrchestrator:
                     ask_attribute=ask_attribute,
                     broad=broad,
                     no_results=not bool(ranked),
+                    usage=turn_usage,
                 )
 
                 if turn >= self.max_turns:
@@ -430,6 +433,18 @@ class ShoppingOrchestrator:
                 break
         return result
 
+    def _consume_ranker_usage(self) -> dict[str, int]:
+        consumer = getattr(self.ranker, "consume_usage", None)
+        if not callable(consumer):
+            return {"prompt_tokens": 0, "completion_tokens": 0}
+        value = consumer()
+        if not isinstance(value, Mapping):
+            return {"prompt_tokens": 0, "completion_tokens": 0}
+        return {
+            "prompt_tokens": max(0, int(value.get("prompt_tokens", 0))),
+            "completion_tokens": max(0, int(value.get("completion_tokens", 0))),
+        }
+
     @staticmethod
     def _select_ask_attribute(
         intent_result: IntentResult,
@@ -459,6 +474,7 @@ class ShoppingOrchestrator:
         ask_attribute: str | None,
         broad: bool,
         no_results: bool,
+        usage: Mapping[str, int] | None = None,
     ) -> dict[str, Any]:
         recommendations = tuple(ranked[:10])
         if ask_attribute:
@@ -471,7 +487,7 @@ class ShoppingOrchestrator:
             message=message,
             ask_attribute=ask_attribute,
             recommendations=recommendations,
-            usage={"prompt_tokens": 0, "completion_tokens": 0},
+            usage=usage or {"prompt_tokens": 0, "completion_tokens": 0},
         ).to_dict()
 
     def _termination_response(self, session_id: str, reason: str) -> dict[str, Any]:
