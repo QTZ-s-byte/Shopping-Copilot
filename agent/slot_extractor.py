@@ -333,6 +333,8 @@ STOPWORDS = {
     "instead",
     "actually",
     "forget",
+    "ignore",
+    "earlier",
     "what",
     "whats",
     "what's",
