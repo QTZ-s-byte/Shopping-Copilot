@@ -118,8 +118,18 @@ class TFIDFSemanticRetriever:
 
         if self.vectorizer is not None:
             query_vector = self.vectorizer.transform([query])
-            matrix = self.document_matrix if indices is None else self.document_matrix[indices]
-            return cosine_similarity(query_vector, matrix)[0].tolist()
+
+            matrix = (
+                self.document_matrix
+                if indices is None
+                else self.document_matrix[indices]
+            )
+
+            return cosine_similarity(
+                query_vector,
+                matrix
+            )[0].tolist()
+        
         query_counts = Counter(self._tokens(query))
         query_weighted = {
             token: count * self._fallback_idf.get(token, 1.0)

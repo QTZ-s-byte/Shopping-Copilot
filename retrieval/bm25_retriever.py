@@ -24,6 +24,7 @@ class BM25Retriever:
         self._idf: dict[str, float] = {}
         self._document_lengths: list[int] = []
         self._average_length = 0.0
+        self._id_to_index: dict[str, int] = {}
 
     def _tokenize(self, text: str) -> List[str]:
         """
@@ -61,6 +62,11 @@ class BM25Retriever:
         self.products = list(
             self.catalog.products.values()
         )
+
+        self._id_to_index = {
+            product.parent_asin: index
+            for index, product in enumerate(self.products)
+        }
 
         self.tokenized_corpus = []
 
@@ -113,14 +119,25 @@ class BM25Retriever:
             return []
 
         query_terms = set(query_tokens)
-        candidate_indices = {
-            index for token in query_terms for index in self._postings.get(token, ())
-        }
+
         if allowed_ids is not None:
+            allowed_indices = {
+                self._id_to_index[parent_asin]
+                for parent_asin in allowed_ids
+                if parent_asin in self._id_to_index
+            }
+
             candidate_indices = {
                 index
-                for index in candidate_indices
-                if self.products[index].parent_asin in allowed_ids
+                for token in query_terms
+                for index in self._postings.get(token, ())
+                if index in allowed_indices
+            }
+        else:
+            candidate_indices = {
+                index
+                for token in query_terms
+                for index in self._postings.get(token, ())
             }
         k1, b = 1.5, 0.75
         scored: list[tuple[int, float]] = []
