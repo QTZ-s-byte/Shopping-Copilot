@@ -1,22 +1,18 @@
 from data.catalog_loader import ProductCatalog
-
 from retrieval.bm25_retriever import BM25Retriever
 from retrieval.hard_filter import HardConstraintFilter
 from retrieval.semantic_retriever import TFIDFSemanticRetriever
+from ranking.candidate import Candidate
+from shopping_copilot.contracts import RetrievalResult, SessionState
 
-from shopping_copilot.contracts import (
-    Candidate,
-    RetrievalResult,
-    SessionState,
-)
-
+# Preliminary ordering for candidate selection only.
+# Final ranking is handled by RuleRanker.
 
 class HybridRetriever:
 
-    def __init__(
-        self,
-        catalog: ProductCatalog,
-    ):
+    def __init__(self, catalog: ProductCatalog, *, use_semantic: bool = False):
+        self.use_semantic = bool(use_semantic)
+
         self.catalog = catalog
 
         # ---------------------------------------------
@@ -30,8 +26,9 @@ class HybridRetriever:
         # TF-IDF semantic retrieval
         # ---------------------------------------------
 
-        self.semantic = TFIDFSemanticRetriever(catalog)
-        self.semantic.build_index()
+        self.semantic = TFIDFSemanticRetriever(catalog) if self.use_semantic else None
+        if self.semantic is not None:
+            self.semantic.build_index()
 
         # ---------------------------------------------
         # Hard constraints
@@ -39,68 +36,51 @@ class HybridRetriever:
 
         self.hard_filter = HardConstraintFilter()
 
-    # =================================================
-    # Canonical Retriever interface
-    # =================================================
-
     def retrieve(
         self,
         query: str,
-        state: SessionState,
-        top_k: int,
+        state: SessionState | None = None,
+        top_k: int = 100,
+        constraints: dict | None = None,
     ) -> RetrievalResult:
+        if state is None:
+            state = SessionState(
+                hard_constraints=dict(constraints or {}),
+                intent="buying",
+            )
 
         # ---------------------------------------------
-        # Step 1: Build constraints from canonical state
-        # ---------------------------------------------
-
-        constraints = self._build_constraints(state)
-
-        # ---------------------------------------------
-        # Step 2: Hard filtering
+        # Step 1: Hard constraint filtering
         # ---------------------------------------------
 
         filtered_products = self.hard_filter.filter(
             self.catalog.products.values(),
-            constraints,
+            state,
         )
 
         total_count = len(filtered_products)
-
-        if total_count == 0:
-            return RetrievalResult(
-                candidates=(),
-                total_count=0,
-                exhausted=True,
-            )
 
         allowed_ids = {
             product.parent_asin
             for product in filtered_products
         }
 
+        if not allowed_ids:
+            return RetrievalResult(candidates=(), total_count=0, exhausted=True)
+
         # ---------------------------------------------
-        # Step 3: BM25
+        # Step 2: BM25
         # ---------------------------------------------
 
+        retrieval_pool = min(len(allowed_ids), max(100, int(top_k) * 10))
         bm25_results = self.bm25.search(
             query=query,
-            top_k=total_count,
-            allowed_ids=allowed_ids,
+            top_k=retrieval_pool,
+            allowed_ids=allowed_ids
         )
 
         # ---------------------------------------------
-        # Step 4: TF-IDF
-        # ---------------------------------------------
-
-        tfidf_results = self.semantic.search(
-            query=query,
-            top_k=total_count,
-            allowed_ids=allowed_ids,
-        )
-
-        # ---------------------------------------------
-        # Step 5: Convert scores
+        # Step 3: TF-IDF
         # ---------------------------------------------
 
         bm25_scores = {
@@ -108,13 +88,29 @@ class HybridRetriever:
             for product, score in bm25_results
         }
 
+        # Re-rank the BM25 pool instead of materializing a full-catalog
+        # semantic ranking for every turn. This keeps latency bounded.
+        tfidf_results = (
+            self.semantic.search(
+                query=query,
+                top_k=retrieval_pool,
+                allowed_ids=set(bm25_scores) if bm25_scores else allowed_ids,
+            )
+            if self.semantic is not None
+            else []
+        )
+
+        # ---------------------------------------------
+        # Step 4: Convert scores to dictionaries
+        # ---------------------------------------------
+
         tfidf_scores = {
             product.parent_asin: score
             for product, score in tfidf_results
         }
 
         # ---------------------------------------------
-        # Step 6: Normalize
+        # Step 5: Normalize scores
         # ---------------------------------------------
 
         normalized_bm25 = self._normalize(
@@ -126,117 +122,62 @@ class HybridRetriever:
         )
 
         # ---------------------------------------------
-        # Step 7: Build canonical Candidates
+        # Step 6: Build Candidates
         # ---------------------------------------------
 
-        candidates = []
+        candidate_map = {}
 
+        candidate_ids = set(bm25_scores) | set(tfidf_scores)
         for product in filtered_products:
 
             product_id = product.parent_asin
+            if product_id not in candidate_ids:
+                continue
 
             keyword_score = normalized_bm25.get(
                 product_id,
-                0.0,
+                0.0
             )
 
             semantic_score = normalized_tfidf.get(
                 product_id,
-                0.0,
-            )
-
-            preliminary_score = (
-                0.6 * keyword_score
-                + 0.4 * semantic_score
+                0.0
             )
 
             candidate = Candidate(
-                parent_asin=product_id,
                 product=product,
-                score=preliminary_score,
                 keyword_score=keyword_score,
                 semantic_score=semantic_score,
-                source_scores={
-                    "bm25": keyword_score,
-                    "tfidf": semantic_score,
-                },
-                reasons=(
-                    "keyword_match",
-                    "semantic_match",
-                ),
+                score=0.6 * keyword_score + 0.4 * semantic_score,
+                source_scores={"keyword": keyword_score, "semantic": semantic_score},
+                reasons=("bm25", "tfidf"),
             )
 
-            candidates.append(candidate)
+            candidate_map[product_id] = candidate
+
 
         # ---------------------------------------------
-        # Step 8: Preliminary candidate ordering
-        # ---------------------------------------------
-        #
-        # This is NOT final ranking.
-        # RuleRanker performs final ranking.
+        # Step 7: Temporary candidate ordering
         # ---------------------------------------------
 
-        candidates.sort(
-            key=lambda candidate: (
-                -candidate.score,
-                candidate.parent_asin,
-            )
+        ranked_candidates = sorted(
+            candidate_map.values(),
+            key=lambda c: (
+                0.6 * c.keyword_score
+                + 0.4 * c.semantic_score
+            ),
+            reverse=True
         )
-
-        limit = max(
-            1,
-            min(int(top_k), 100),
-        )
-
-        selected = candidates[:limit]
 
         return RetrievalResult(
-            candidates=tuple(selected),
+            candidates=tuple(ranked_candidates[:top_k]),
             total_count=total_count,
-            exhausted=(total_count <= limit),
+            exhausted=len(ranked_candidates) <= top_k,
         )
-
-    # =================================================
-    # Build constraints from SessionState
-    # =================================================
-
-    @staticmethod
-    def _build_constraints(
-        state: SessionState,
-    ) -> dict:
-
-        constraints = dict(
-            state.hard_constraints
-        )
-
-        # Soft preferences are available to retrieval
-        # when they are not already hard constraints.
-        for key, value in state.soft_preferences.items():
-
-            if key not in constraints:
-                constraints[key] = value
-
-        # Negative constraints
-        negative_keywords = (
-            state.negative_constraints.get(
-                "keywords",
-                [],
-            )
-        )
-
-        constraints["negative_keywords"] = list(
-            negative_keywords
-        )
-
-        return constraints
-
-    # =================================================
-    # Score normalization
-    # =================================================
 
     @staticmethod
     def _normalize(
-        scores: dict[str, float],
+        scores: dict[str, float]
     ) -> dict[str, float]:
 
         if not scores:
