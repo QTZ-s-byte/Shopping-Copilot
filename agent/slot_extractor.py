@@ -1,4 +1,4 @@
-"""Deterministic, offline product-constraint extraction for a user message.
+﻿"""Deterministic, offline product-constraint extraction for a user message.
 
 The extractor targets the official ``ask_attribute`` taxonomy:
 ``category, material, color, size, style, brand, budget, feature, use_case``.
@@ -457,6 +457,19 @@ class SlotExtractor:
         slots.brand = self._extract_vocab(text, self._brand_regex, excluded)
         slots.color = self._extract_vocab(text, self._color_regex, excluded)
         slots.material = self._extract_vocab(text, self._material_regex, excluded)
+
+        # Avoid treating explicit material terms such as "cotton" or
+        # "polyester" as product categories when the same surface form
+        # exists in both vocabularies.
+        material_values = {value.lower() for value in slots.material}
+
+        if material_values and slots.category:
+            slots.category = [
+                category
+                for category in slots.category
+                if category.lower() not in material_values
+            ]
+
         slots.style = self._extract_vocab(text, self._style_regex, excluded)
         slots.feature = self._extract_vocab(text, self._feature_regex, excluded)
         slots.use_case = self._extract_vocab(text, self._use_case_regex, excluded)
