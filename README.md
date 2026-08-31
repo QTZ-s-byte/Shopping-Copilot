@@ -27,7 +27,8 @@ repeated requests, and never stores secrets in traces. Member B's BM25/rule
 ranking path is primary when its optional dependency is installed. TF-IDF
 semantic reranking is opt-in through `SHOPPING_COPILOT_USE_SEMANTIC=1` because
 the full 50,000-item matrix increases memory and latency. The offline SQLite
-FTS5 path is selected automatically when the BM25 dependency is unavailable.
+FTS5 path is selected automatically when the BM25 dependency is unavailable or
+when `SHOPPING_COPILOT_FORCE_FALLBACK=1` is set for a deterministic smoke run.
 
 ## Official participant kit
 
