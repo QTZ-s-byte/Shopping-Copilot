@@ -97,7 +97,6 @@ def build_query(state: SessionState, user_message: str) -> str:
     for container in (
         state.hard_constraints,
         state.soft_preferences,
-        state.negative_constraints,
     ):
         for key, value in container.items():
             parts.append(f"{key} {value}")
@@ -153,4 +152,3 @@ def call_with_retry(
             safe_sleep(delays[attempt] if attempt < len(delays) else 0.0)
     assert last_error is not None
     raise last_error
-

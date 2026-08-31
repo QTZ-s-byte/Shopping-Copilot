@@ -133,6 +133,7 @@ class IntentRouter:
             override=override,
             override_reason=override_reason,
             no_preference=no_preference,
+            raw=user_message,
         )
 
     def _detect_override(

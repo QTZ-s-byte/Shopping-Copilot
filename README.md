@@ -7,24 +7,27 @@ them, and returns the exact interface expected by the public evaluator.
 
 ## Current C-module implementation
 
-The `shopping_copilot` package owns the lifecycle plumbing so the other team
-workstreams can be swapped in through dependency injection:
+The integrated project uses one canonical contract. C owns the lifecycle
+plumbing while A and B provide implementations directly against that contract:
 
 ```text
 starter.agent.Agent
   -> ShoppingOrchestrator
-       -> IntentRouter       (Member A)
+       -> IntentRouter       (Member A: agent/intent_router.py)
        -> InMemoryContextMemory
-       -> Retriever/Ranker    (Member B)
+       -> HybridRetriever + RuleRanker (Member B)
        -> TraceSink + fallback/retry policy
 ```
 
-The shared contracts are in `shopping_copilot/contracts.py`.  The
-orchestrator enforces the official `top_k=10` contract, rejects a turn beyond
-10 without calling a plugin, filters duplicate/invalid catalog IDs, supports
-idempotent repeated requests, and never stores secrets in traces.  The default
-catalog retriever is an offline SQLite FTS5 fallback; it can be replaced by a
-stronger hybrid implementation without changing `starter/agent.py`.
+The shared contracts are in `shopping_copilot/contracts.py`; see
+`docs/integration_contract_v1.md` for the integration rules. The orchestrator
+enforces the official `top_k=10` contract, rejects a turn beyond 10 without
+calling a plugin, filters duplicate/invalid catalog IDs, supports idempotent
+repeated requests, and never stores secrets in traces. Member B's BM25/rule
+ranking path is primary when its optional dependency is installed. TF-IDF
+semantic reranking is opt-in through `SHOPPING_COPILOT_USE_SEMANTIC=1` because
+the full 50,000-item matrix increases memory and latency. The offline SQLite
+FTS5 path is selected automatically when the BM25 dependency is unavailable.
 
 ## Official participant kit
 
@@ -39,8 +42,9 @@ The expected catalog checksum is:
 07fd142631fd6b03e2b4d09988c3eb7d53720e9d57010c79db48eeaada50a8f8
 ```
 
-Python 3.10+ is recommended.  No third-party Python dependency is required by
-the C module.
+Python 3.10+ is recommended. No third-party Python dependency is required by
+the C fallback path; the primary B path uses the packages in
+`requirements.txt`.
 
 ## Run the public evaluator
 
@@ -74,7 +78,7 @@ Only the first 10 valid, unique `parent_asin` values are scored.  Hits are
 exact catalog-ID matches.  The official metrics are Hit Rate@10, MRR, MTTC,
 Efficiency, and the recommended TechnicalScore.
 
-## Injecting Members A/B implementations
+## Integrated Members A/B implementations
 
 Member A should implement:
 
@@ -96,10 +100,10 @@ class Ranker:
         ...
 ```
 
-Then pass those objects to `ShoppingOrchestrator(router=..., retriever=...,
-ranker=...)`.  A router may return either `IntentResult` or a mapping using the
-aliases documented in `contracts.py`; a retriever may return a list or a
-`RetrievalResult` with `total_count` for broad-query clarification.
+These implementations are wired directly by `starter/agent.py`. They use the
+canonical types in `shopping_copilot/contracts.py`; the retriever returns a
+`RetrievalResult` with `total_count` so the C lifecycle can detect broad-query
+clarification cases.
 
 ## Tests
 
@@ -136,4 +140,3 @@ With the default offline router and FTS5 fallback on the public 200-session
 set, the smoke run completed successfully.  It is a plumbing baseline, not the
 team's final model; Members A/B should improve retrieval and state-aware
 ranking before submission.
-

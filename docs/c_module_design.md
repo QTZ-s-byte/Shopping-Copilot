@@ -24,9 +24,8 @@ class IntentRouter:
 `clarification_attribute`. The explicit remove/replace fields are required for
 the intent-override scenario.
 
-The orchestrator also accepts a mapping with the aliases documented in
-`shopping_copilot/contracts.py`, which allows Member A to integrate without
-changing the evaluator-facing `Agent` API.
+The router returns this canonical type directly; it never mutates
+`SessionState`.
 
 ### Member B: retrieval and ranking
 

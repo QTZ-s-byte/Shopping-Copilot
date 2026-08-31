@@ -1,16 +1,5 @@
-from dataclasses import dataclass
+"""Canonical candidate type re-exported for the ranking package."""
 
-from data.catalog_loader import Product
+from shopping_copilot.contracts import Candidate
 
-
-@dataclass
-class Candidate:
-    product: Product
-
-    keyword_score: float = 0.0
-    category_score: float = 0.0
-    attribute_score: float = 0.0
-    semantic_score: float = 0.0
-    popularity_score: float = 0.0
-
-    final_score: float = 0.0
+__all__ = ["Candidate"]

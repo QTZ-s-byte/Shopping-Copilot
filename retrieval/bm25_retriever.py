@@ -1,7 +1,12 @@
 import re
+import math
+import heapq
 from typing import List, Tuple
 
-from rank_bm25 import BM25Okapi
+try:
+    from rank_bm25 import BM25Okapi
+except ImportError:  # pragma: no cover - exercised in dependency-free runs
+    BM25Okapi = None
 
 from data.catalog_loader import Product, ProductCatalog
 
@@ -59,9 +64,7 @@ class BM25Retriever:
 
             self.tokenized_corpus.append(tokens)
 
-        self.bm25 = BM25Okapi(
-            self.tokenized_corpus
-        )
+        self.bm25 = BM25Okapi(self.tokenized_corpus) if BM25Okapi else None
 
     def search(
         self,
@@ -76,9 +79,9 @@ class BM25Retriever:
         parent_asin is in allowed_ids will be returned.
         """
 
-        if self.bm25 is None:
+        if not self.products:
             raise RuntimeError(
-                "BM25 index has not been built. "
+                "BM25 index has not been built or the catalog is empty. "
                 "Call build_index() first."
             )
 
@@ -87,14 +90,34 @@ class BM25Retriever:
         if not query_tokens:
             return []
 
-        scores = self.bm25.get_scores(
-            query_tokens
-        )
+        if self.bm25 is not None:
+            scores = self.bm25.get_scores(query_tokens)
+        else:
+            query_set = set(query_tokens)
+            document_frequency = {
+                token: sum(token in document for document in self.tokenized_corpus)
+                for token in query_set
+            }
+            scores = []
+            for document in self.tokenized_corpus:
+                overlap = set(document) & query_set
+                score = sum(
+                    math.log((1 + len(self.tokenized_corpus)) / (1 + document_frequency[token]))
+                    for token in overlap
+                )
+                scores.append(float(score))
 
-        ranked_indices = sorted(
-            range(len(scores)),
-            key=lambda i: scores[i],
-            reverse=True
+        eligible = (
+            range(len(scores))
+            if allowed_ids is None
+            else (
+                index
+                for index, product in enumerate(self.products)
+                if product.parent_asin in allowed_ids
+            )
+        )
+        ranked_indices = heapq.nlargest(
+            max(0, int(top_k)), eligible, key=lambda index: float(scores[index])
         )
 
         results = []
@@ -103,19 +126,11 @@ class BM25Retriever:
 
             product = self.products[index]
 
-            # Apply optional hard-constraint ID filter
-            if allowed_ids is not None:
-                if product.parent_asin not in allowed_ids:
-                    continue
-
             results.append(
                 (
                     product,
                     float(scores[index])
                 )
             )
-
-            if len(results) >= top_k:
-                break
 
         return results

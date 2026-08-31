@@ -14,7 +14,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Iterable
 
-from .contracts import Candidate, RetrievalResult, SessionState
+from .contracts import Candidate, Product, RetrievalResult, SessionState
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
@@ -52,6 +52,7 @@ class SQLiteCatalogRetriever:
         self.catalog_path = Path(catalog_path)
         self.connection = sqlite3.connect(":memory:", check_same_thread=False)
         self.catalog_ids: set[str] = set()
+        self.products: dict[str, Product] = {}
         self._available = False
         self._build_index()
 
@@ -83,7 +84,20 @@ class SQLiteCatalogRetriever:
                     parent_asin = str(product.get("parent_asin", "")).strip()
                     if not parent_asin:
                         continue
+                    product_record = Product(
+                        parent_asin=parent_asin,
+                        title=flatten_text(product.get("title")),
+                        features=tuple(_as_text_list(product.get("features"))),
+                        description=tuple(_as_text_list(product.get("description"))),
+                        price=_normalize_price(product.get("price")),
+                        categories=tuple(_as_text_list(product.get("categories"))),
+                        details=product.get("details") if isinstance(product.get("details"), dict) else {},
+                        average_rating=product.get("average_rating"),
+                        rating_number=product.get("rating_number", 0),
+                        store=str(product.get("store")) if product.get("store") is not None else None,
+                    )
                     self.catalog_ids.add(parent_asin)
+                    self.products[parent_asin] = product_record
                     batch.append(
                         (
                             parent_asin,
@@ -105,6 +119,7 @@ class SQLiteCatalogRetriever:
         except (OSError, json.JSONDecodeError, sqlite3.Error):
             self.connection.rollback()
             self.catalog_ids.clear()
+            self.products.clear()
             self._available = False
 
     def retrieve(self, query: str, state: SessionState, top_k: int) -> RetrievalResult:
@@ -130,6 +145,7 @@ class SQLiteCatalogRetriever:
             candidates.append(
                 Candidate(
                     parent_asin=str(parent_asin),
+                    product=self.products.get(str(parent_asin)),
                     score=score,
                     source_scores={"bm25": score},
                     reasons=("keyword_match",),
@@ -147,5 +163,61 @@ class SQLiteCatalogRetriever:
         return RetrievalResult(candidates=tuple(candidates), total_count=total)
 
 
-__all__ = ["SQLiteCatalogRetriever", "flatten_text", "terms"]
+class ProductCatalog:
+    """Canonical in-memory catalog used by the hybrid retrieval pipeline."""
 
+    def __init__(self, path: str | Path | None = None) -> None:
+        self.products: dict[str, Product] = {}
+        if path is not None:
+            self.load(path)
+
+    @property
+    def valid_ids(self) -> set[str]:
+        return set(self.products)
+
+    def load(self, path: str | Path) -> None:
+        source = Path(path)
+        opener = gzip.open if source.suffix == ".gz" else open
+        with opener(source, mode="rt", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                raw = json.loads(line)
+                parent_asin = str(raw.get("parent_asin", "")).strip()
+                if not parent_asin:
+                    continue
+                self.products[parent_asin] = Product(
+                    parent_asin=parent_asin,
+                    title=flatten_text(raw.get("title")),
+                    features=tuple(_as_text_list(raw.get("features"))),
+                    description=tuple(_as_text_list(raw.get("description"))),
+                    price=_normalize_price(raw.get("price")),
+                    categories=tuple(_as_text_list(raw.get("categories"))),
+                    details=raw.get("details") if isinstance(raw.get("details"), dict) else {},
+                    average_rating=raw.get("average_rating"),
+                    rating_number=raw.get("rating_number", 0),
+                    store=str(raw.get("store")) if raw.get("store") is not None else None,
+                )
+
+    def get(self, product_id: str) -> Product | None:
+        return self.products.get(str(product_id))
+
+
+def _as_text_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value if item is not None]
+    return [str(value)]
+
+
+def _normalize_price(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    match = re.search(r"\d+(?:\.\d+)?", str(value))
+    return float(match.group(0)) if match else None
+
+
+__all__ = ["Product", "ProductCatalog", "SQLiteCatalogRetriever", "flatten_text", "terms"]

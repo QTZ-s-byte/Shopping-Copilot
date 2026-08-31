@@ -1,195 +1,106 @@
-from typing import Iterable
+"""Deterministic hard-constraint filtering for the canonical session state."""
 
-from data.catalog_loader import Product
+from typing import Any, Iterable, Mapping
+
+from shopping_copilot.contracts import Product, SessionState
 
 
-class HardConstraintFilter:
+def _values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip().lower() for item in value if str(item).strip()]
+    return [str(value).strip().lower()]
 
-    def filter(
-        self,
-        products: Iterable[Product],
-        constraints: dict
-    ) -> list[Product]:
 
-        results = []
-
-        for product in products:
-
-            # -------------------------
-            # Brand
-            # -------------------------
-            if constraints.get("brand"):
-                if not self._match_brand(
-                    product,
-                    constraints["brand"]
-                ):
-                    continue
-
-            # -------------------------
-            # Category
-            # -------------------------
-            if constraints.get("category"):
-                if not self._match_category(
-                    product,
-                    constraints["category"]
-                ):
-                    continue
-
-            # -------------------------
-            # Color
-            # -------------------------
-            if constraints.get("color"):
-                if not self._match_color(
-                    product,
-                    constraints["color"]
-                ):
-                    continue
-
-            # -------------------------
-            # Price minimum
-            # -------------------------
-            if constraints.get("price_min") is not None:
-
-                if product.price is not None:
-
-                    if product.price < constraints["price_min"]:
-                        continue
-
-            # -------------------------
-            # Price maximum
-            # -------------------------
-            if constraints.get("price_max") is not None:
-
-                if product.price is not None:
-
-                    if product.price > constraints["price_max"]:
-                        continue
-
-            # -------------------------
-            # Negative keywords
-            # -------------------------
-            negative_keywords = constraints.get(
-                "negative_keywords",
-                []
-            )
-
-            if self._contains_negative_keyword(
-                product,
-                negative_keywords
-            ):
-                continue
-
-            results.append(product)
-
-        return results
-
-    # =====================================================
-    # Brand
-    # =====================================================
-
-    def _match_brand(
-        self,
-        product: Product,
-        brand: str
-    ) -> bool:
-
-        brand = brand.lower().strip()
-
-        evidence = []
-
-        # Store
-        if product.store:
-            evidence.append(product.store)
-
-        # Manufacturer
-        manufacturer = product.details.get(
-            "Manufacturer"
-        )
-
-        if manufacturer:
-            evidence.append(manufacturer)
-
-        # Title
-        evidence.append(product.title)
-
-        for text in evidence:
-
-            if brand in text.lower():
-                return True
-
-        return False
-
-    # =====================================================
-    # Category
-    # =====================================================
-
-    def _match_category(
-        self,
-        product: Product,
-        category: str
-    ) -> bool:
-
-        category = category.lower().strip()
-
-        # First check official category hierarchy
-        for item in product.categories:
-
-            if category in item.lower():
-                return True
-
-        # Then check title
-        if category in product.title.lower():
-            return True
-
-        return False
-
-    # =====================================================
-    # Color
-    # =====================================================
-
-    def _match_color(
-        self,
-        product: Product,
-        color: str
-    ) -> bool:
-
-        color = color.lower().strip()
-
-        text_parts = [
-            product.title,
-            *product.features,
-            *product.description,
-        ]
-
-        text = " ".join(text_parts).lower()
-
-        return color in text
-
-    # =====================================================
-    # Negative keywords
-    # =====================================================
-
-    def _contains_negative_keyword(
-        self,
-        product: Product,
-        negative_keywords: list[str]
-    ) -> bool:
-
-        if not negative_keywords:
-            return False
-
-        text_parts = [
+def _text(product: Product) -> str:
+    return " ".join(
+        [
             product.title,
             *product.features,
             *product.description,
             *product.categories,
+            product.store or "",
+            " ".join(f"{key} {value}" for key, value in product.details.items()),
         ]
+    ).lower()
 
-        text = " ".join(text_parts).lower()
 
-        for keyword in negative_keywords:
+class HardConstraintFilter:
+    """Filter products using canonical SessionState or a constraint mapping."""
 
-            if keyword.lower() in text:
-                return True
+    def __init__(self) -> None:
+        self._text_cache: dict[str, str] = {}
 
-        return False
+    def filter(
+        self,
+        products: Iterable[Product],
+        state_or_constraints: SessionState | Mapping[str, Any],
+    ) -> list[Product]:
+        constraints = self._constraints(state_or_constraints)
+        results: list[Product] = []
+        for product in products:
+            if not self._matches_positive(product, constraints):
+                continue
+            if self._matches_negative(product, constraints):
+                continue
+            results.append(product)
+        return results
+
+    @staticmethod
+    def _constraints(value: SessionState | Mapping[str, Any]) -> dict[str, Any]:
+        if isinstance(value, SessionState):
+            constraints = dict(value.hard_constraints)
+            budget = constraints.get("budget") or {}
+            if isinstance(budget, Mapping):
+                if budget.get("min") is not None:
+                    constraints["price_min"] = budget["min"]
+                if budget.get("max") is not None:
+                    constraints["price_max"] = budget["max"]
+            constraints["negative_constraints"] = dict(value.negative_constraints)
+            constraints["negative_keywords"] = list(
+                value.negative_constraints.get("negative_keywords", []) or []
+            )
+            return constraints
+        return dict(value)
+
+    def _matches_positive(self, product: Product, constraints: Mapping[str, Any]) -> bool:
+        searchable = self._searchable(product)
+        for field in ("brand", "category", "color", "size", "material", "style", "feature", "use_case"):
+            values = _values(constraints.get(field))
+            if values and not any(value in searchable for value in values):
+                return False
+
+        minimum = constraints.get("price_min")
+        maximum = constraints.get("price_max")
+        if minimum is not None or maximum is not None:
+            if product.price is None:
+                return False
+            if minimum is not None and product.price < float(minimum):
+                return False
+            if maximum is not None and product.price > float(maximum):
+                return False
+        return True
+
+    def _matches_negative(self, product: Product, constraints: Mapping[str, Any]) -> bool:
+        searchable = self._searchable(product)
+        negative = constraints.get("negative_constraints")
+        if isinstance(negative, Mapping):
+            for field, value in negative.items():
+                values = _values(value)
+                if field == "negative_keywords":
+                    if any(item in searchable for item in values):
+                        return True
+                elif any(item in searchable for item in values):
+                    return True
+        return any(item in searchable for item in _values(constraints.get("negative_keywords")))
+
+    def _searchable(self, product: Product) -> str:
+        cached = self._text_cache.get(product.parent_asin)
+        if cached is None:
+            cached = _text(product)
+            self._text_cache[product.parent_asin] = cached
+        return cached
+
+
+__all__ = ["HardConstraintFilter"]

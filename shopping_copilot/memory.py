@@ -15,6 +15,7 @@ from threading import RLock
 from typing import Any, Iterator, Mapping
 
 from .contracts import IntentResult, SessionState, StateDiff
+from .contracts import ALLOWED_ATTRIBUTES
 
 
 def _clean_value(value: Any) -> Any:
@@ -126,6 +127,7 @@ class InMemoryContextMemory:
         *,
         expected_turn: int | None = None,
         max_turns: int = 10,
+        asked_attribute: str | None = None,
     ) -> StateDiff:
         """Apply an intent/slot update and atomically advance the turn."""
 
@@ -187,6 +189,22 @@ class InMemoryContextMemory:
             if intent_result.intent is not None:
                 state.intent = intent_result.intent
 
+            if asked_attribute in ALLOWED_ATTRIBUTES:
+                state.asked_attributes.add(str(asked_attribute))
+            for attribute in intent_result.no_preference_attributes:
+                if attribute in ALLOWED_ATTRIBUTES:
+                    state.no_preference_attributes.add(attribute)
+            if intent_result.no_preference and not intent_result.no_preference_attributes:
+                missing = [
+                    name
+                    for name in ("category", "use_case", "budget", "size", "color", "material", "brand", "feature")
+                    if name in state.asked_attributes
+                    and name not in state.hard_constraints
+                    and name not in state.soft_preferences
+                ]
+                if missing:
+                    state.no_preference_attributes.add(missing[-1])
+
             if user_message.strip():
                 state.recent_messages.append(user_message.strip()[:2000])
                 if len(state.recent_messages) > self.history_window:
@@ -219,6 +237,14 @@ class InMemoryContextMemory:
                 if len(result) >= 100:
                     break
             record.state.last_candidates = result
+            record.state.version += 1
+
+    def mark_asked_attribute(self, session_id: str, attribute: str | None) -> None:
+        if attribute not in ALLOWED_ATTRIBUTES:
+            return
+        record = self._record(session_id)
+        with record.lock:
+            record.state.asked_attributes.add(str(attribute))
             record.state.version += 1
 
     def mark_completed(self, session_id: str, reason: str) -> None:

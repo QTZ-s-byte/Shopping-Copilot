@@ -2,6 +2,7 @@ from data.catalog_loader import ProductCatalog
 from ranking.candidate import Candidate
 from ranking.rule_ranker import RuleRanker
 from retrieval.hybrid_retriever import HybridRetriever
+from shopping_copilot.contracts import SessionState
 
 
 class ProductSearchService:
@@ -14,10 +15,16 @@ class ProductSearchService:
     def search(
         self,
         query: str,
-        constraints: dict,
-        intent: str,
-        top_k: int = 10
+        state: SessionState | None = None,
+        top_k: int = 10,
+        constraints: dict | None = None,
+        intent: str | None = None,
     ) -> list[Candidate]:
+        if state is None:
+            state = SessionState(
+                hard_constraints=dict(constraints or {}),
+                intent=intent or "buying",
+            )
 
         if top_k <= 0:
             return []
@@ -27,15 +34,14 @@ class ProductSearchService:
 
         candidates = self.retriever.retrieve(
             query=query,
-            constraints=constraints,
+            state=state,
             top_k=100
         )
 
         ranked_candidates = self.ranker.rank(
             query=query,
-            candidates=candidates,
-            constraints=constraints,
-            intent=intent
+            candidates=list(candidates),
+            state=state,
         )
 
         return ranked_candidates[:top_k]

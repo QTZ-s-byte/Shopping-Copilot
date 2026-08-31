@@ -198,6 +198,7 @@ class ShoppingOrchestrator:
                 state = record.state
                 self.memory.set_candidates(session_id, [item.parent_asin for item in ranked])
                 ask_attribute = self._select_ask_attribute(intent_result, state, broad, ranked)
+                self.memory.mark_asked_attribute(session_id, ask_attribute)
                 response = self._make_response(
                     ranked,
                     ask_attribute=ask_attribute,
@@ -261,7 +262,37 @@ class ShoppingOrchestrator:
             ),
             self.retry_policy,
         )
-        return self._coerce_intent(value), retries
+        return self._normalize_intent(self._coerce_intent(value), state), retries
+
+    @staticmethod
+    def _normalize_intent(result: IntentResult, state: SessionState) -> IntentResult:
+        """Convert the shared A result into explicit C state operations."""
+
+        if not result.override:
+            return result
+        incoming = set(result.hard_constraints) | set(result.soft_preferences) | set(result.negative_constraints)
+        existing = set(state.hard_constraints) | set(state.soft_preferences) | set(state.negative_constraints)
+        remove_fields = tuple(sorted(existing - incoming))
+        replace_fields = {
+            **dict(result.hard_constraints),
+            **dict(result.soft_preferences),
+            **dict(result.negative_constraints),
+        }
+        return IntentResult(
+            intent=result.intent,
+            confidence=result.confidence,
+            hard_constraints=result.hard_constraints,
+            soft_preferences=result.soft_preferences,
+            negative_constraints=result.negative_constraints,
+            remove_fields=remove_fields,
+            replace_fields=replace_fields,
+            clarification_attribute=result.clarification_attribute,
+            override=result.override,
+            override_reason=result.override_reason,
+            no_preference=result.no_preference,
+            no_preference_attributes=result.no_preference_attributes,
+            raw=result.raw,
+        )
 
     def _run_retriever(
         self, query: str, state: SessionState, top_k: int
@@ -406,12 +437,17 @@ class ShoppingOrchestrator:
         broad: bool,
         ranked: Sequence[Candidate],
     ) -> str | None:
-        if intent_result.clarification_attribute in ALLOWED_ATTRIBUTES:
+        if (
+            intent_result.clarification_attribute in ALLOWED_ATTRIBUTES
+            and intent_result.clarification_attribute not in state.no_preference_attributes
+        ):
             return intent_result.clarification_attribute
         if not broad and ranked:
             return None
         # Prefer a missing field that is meaningful for the current intent.
         for field in ("category", "use_case", "budget", "size", "color", "material", "brand", "feature"):
+            if field in state.asked_attributes or field in state.no_preference_attributes:
+                continue
             if field not in state.hard_constraints and field not in state.soft_preferences:
                 return field
         return "other" if broad or not ranked else None

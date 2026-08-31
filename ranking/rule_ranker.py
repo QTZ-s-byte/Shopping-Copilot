@@ -2,6 +2,7 @@ import math
 
 from data.catalog_loader import Product
 from ranking.candidate import Candidate
+from shopping_copilot.contracts import SessionState
 
 
 class RuleRanker:
@@ -25,14 +26,20 @@ class RuleRanker:
         self,
         query: str,
         candidates: list[Candidate],
+        state: SessionState | None = None,
         constraints: dict | None = None,
-        intent: str = "buying"
+        intent: str | None = None,
     ) -> list[Candidate]:
 
         if not candidates:
             return []
 
+        if state is not None:
+            constraints = dict(state.hard_constraints)
+            constraints.update(state.soft_preferences)
+            intent = state.intent or "browsing"
         constraints = constraints or {}
+        intent = intent or "buying"
 
         # -------------------------------------------------
         # Calculate all ranking features
@@ -84,6 +91,14 @@ class RuleRanker:
                 + weights["semantic"] * candidate.semantic_score
                 + weights["popularity"] * candidate.popularity_score
             )
+            candidate.score = candidate.final_score
+            candidate.source_scores = {
+                "keyword": candidate.keyword_score,
+                "category": candidate.category_score,
+                "attribute": candidate.attribute_score,
+                "semantic": candidate.semantic_score,
+                "popularity": candidate.popularity_score,
+            }
 
         # -------------------------------------------------
         # Sort by final score
@@ -115,7 +130,7 @@ class RuleRanker:
         if not category:
             return 0.0
 
-        category = category.lower().strip()
+        category = str(category[-1] if isinstance(category, list) and category else category).lower().strip()
 
         # Exact/substring match in official category path
         category_text = " ".join(
@@ -177,7 +192,8 @@ class RuleRanker:
                 product.title
             ]).lower()
 
-            if brand.lower() in evidence:
+            brands = brand if isinstance(brand, (list, tuple, set)) else [brand]
+            if any(str(item).lower() in evidence for item in brands):
                 scores.append(1.0)
             else:
                 scores.append(0.0)
@@ -196,7 +212,8 @@ class RuleRanker:
                 *product.description
             ]).lower()
 
-            if color.lower() in text:
+            colors = color if isinstance(color, (list, tuple, set)) else [color]
+            if any(str(item).lower() in text for item in colors):
                 scores.append(1.0)
             else:
                 scores.append(0.0)
@@ -215,7 +232,8 @@ class RuleRanker:
                 *product.description
             ]).lower()
 
-            if material.lower() in text:
+            materials = material if isinstance(material, (list, tuple, set)) else [material]
+            if any(str(item).lower() in text for item in materials):
                 scores.append(1.0)
             else:
                 scores.append(0.0)
@@ -234,7 +252,8 @@ class RuleRanker:
                 *product.description
             ]).lower()
 
-            if size.lower() in text:
+            sizes = size if isinstance(size, (list, tuple, set)) else [size]
+            if any(str(item).lower() in text for item in sizes):
                 scores.append(1.0)
             else:
                 scores.append(0.0)
