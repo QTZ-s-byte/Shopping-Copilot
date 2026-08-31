@@ -58,7 +58,7 @@ def run_official_evaluator(
     project_root: str | Path,
     catalog_path: str | Path = "data/catalog.jsonl",
     dataset_path: str | Path = "data/public_set.jsonl",
-    output_path: str | Path = "results.json",
+    output_path: str | Path = "results/results.json",
     python_executable: str | None = None,
 ) -> EvaluationReport:
     """Run ``evaluator.local_evaluator`` without modifying its source."""

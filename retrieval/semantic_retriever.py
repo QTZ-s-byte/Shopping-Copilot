@@ -40,6 +40,7 @@ class TFIDFSemanticRetriever:
         )
 
         self.document_matrix = None
+        self._product_indices: dict[str, int] = {}
         self._fallback_documents: list[Counter[str]] = []
         self._fallback_idf: dict[str, float] = {}
 
@@ -71,6 +72,9 @@ class TFIDFSemanticRetriever:
             self._product_to_text(product)
             for product in self.products
         ]
+        self._product_indices = {
+            product.parent_asin: index for index, product in enumerate(self.products)
+        }
 
         if self.vectorizer is not None:
             try:
@@ -99,10 +103,7 @@ class TFIDFSemanticRetriever:
             for token, frequency in document_frequency.items()
         }
 
-    def score(
-        self,
-        query: str
-    ) -> List[float]:
+    def score(self, query: str, indices: list[int] | None = None) -> List[float]:
 
         if self.document_matrix is None and not self._fallback_documents:
             raise RuntimeError(
@@ -117,7 +118,8 @@ class TFIDFSemanticRetriever:
 
         if self.vectorizer is not None:
             query_vector = self.vectorizer.transform([query])
-            return cosine_similarity(query_vector, self.document_matrix)[0].tolist()
+            matrix = self.document_matrix if indices is None else self.document_matrix[indices]
+            return cosine_similarity(query_vector, matrix)[0].tolist()
         query_counts = Counter(self._tokens(query))
         query_weighted = {
             token: count * self._fallback_idf.get(token, 1.0)
@@ -125,7 +127,9 @@ class TFIDFSemanticRetriever:
         }
         query_norm = math.sqrt(sum(value * value for value in query_weighted.values()))
         similarities: list[float] = []
-        for document in self._fallback_documents:
+        selected = range(len(self._fallback_documents)) if indices is None else indices
+        for index in selected:
+            document = self._fallback_documents[index]
             weighted = {
                 token: count * self._fallback_idf.get(token, 1.0)
                 for token, count in document.items()
@@ -146,9 +150,16 @@ class TFIDFSemanticRetriever:
         allowed_ids: set[str] | None = None
     ) -> List[Tuple[Product, float]]:
 
-        similarities = self.score(query)
+        selected_indices = None
+        if allowed_ids is not None:
+            selected_indices = [
+                self._product_indices[parent_asin]
+                for parent_asin in allowed_ids
+                if parent_asin in self._product_indices
+            ]
+        similarities = self.score(query, selected_indices)
 
-        ranked_indices = sorted(
+        ranked_positions = sorted(
             range(len(similarities)),
             key=lambda i: similarities[i],
             reverse=True
@@ -156,7 +167,8 @@ class TFIDFSemanticRetriever:
 
         results = []
 
-        for index in ranked_indices:
+        for position in ranked_positions:
+            index = position if selected_indices is None else selected_indices[position]
 
             product = self.products[index]
 
@@ -168,7 +180,7 @@ class TFIDFSemanticRetriever:
             results.append(
                 (
                     product,
-                    float(similarities[index])
+                    float(similarities[position])
                 )
             )
 

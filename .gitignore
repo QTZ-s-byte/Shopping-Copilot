@@ -12,6 +12,7 @@ Thumbs.db
 !.env.example
 results.json
 results-*.json
+/results/
 *.log
 data/catalog.jsonl
 data/catalog.jsonl.gz

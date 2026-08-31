@@ -47,7 +47,7 @@ def main() -> int:
 
     print("Shopping Copilot manual session (press Enter on an empty line to exit).")
     print(f"Catalog: {catalog_path}")
-    print(f"Retrieval mode: {'Member B' if not agent.using_fallback else 'SQLite fallback'}")
+    print(f"Retrieval mode: {'SQLite fallback' if agent.using_fallback else 'Hybrid retrieval'}")
 
     for turn in range(1, 11):
         try:

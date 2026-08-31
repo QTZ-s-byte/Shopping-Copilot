@@ -72,7 +72,7 @@ class DefaultIntentRouter:
 
 
 class EmptyRetriever:
-    """Safe fallback when member B's catalog retriever is unavailable."""
+    """Safe fallback when the configured catalog retriever is unavailable."""
 
     def retrieve(self, query: str, state: SessionState, top_k: int):
         return []

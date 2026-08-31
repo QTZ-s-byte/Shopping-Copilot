@@ -4,15 +4,15 @@ This document defines the single internal contract shared by the intent,
 retrieval/ranking, and orchestration workstreams. The official evaluator only
 sees `starter.agent.Agent`; all internal components use the types below.
 
-## Ownership
+## Component boundaries
 
-- Member A owns intent classification, slot extraction, and intent-level
-  clarification signals.
-- Member B owns catalog retrieval, hard filtering, and candidate ranking.
-- Member C owns session lifecycle, state mutation, fallback, tracing, and
-  evaluation.
-- Only C may mutate `SessionState`. A and B return structured values and must
-  not mutate the state or catalog.
+- The intent component returns classification, slot extraction, and
+  intent-level clarification signals.
+- The retrieval/ranking component returns catalog candidates and scores.
+- The lifecycle component owns session state mutation, fallback, tracing, and
+  evaluation integration.
+- Only the lifecycle component may mutate `SessionState`; other components
+  return structured values and must not mutate the state or catalog.
 
 ## Canonical state
 
@@ -27,7 +27,7 @@ session isolation, rollback, and request idempotency.
 
 ## Canonical intent result
 
-Member A returns `shopping_copilot.contracts.IntentResult`:
+The intent component returns `shopping_copilot.contracts.IntentResult`:
 
 ```python
 IntentResult(

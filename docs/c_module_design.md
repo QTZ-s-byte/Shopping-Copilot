@@ -2,14 +2,14 @@
 
 ## Objective
 
-The C module owns lifecycle orchestration outside the official evaluator. It
-does not implement a specific intent model or product-retrieval strategy.
-Members A and B integrate through small protocols so that the core turn
-lifecycle remains independently testable.
+The lifecycle layer owns orchestration outside the official evaluator. It does
+not force a specific intent model or product-retrieval strategy. Intent,
+retrieval, ranking, and lifecycle components integrate through small protocols
+so that the core turn lifecycle remains independently testable.
 
 ## Integration points
 
-### Member A: intent routing and slot extraction
+### Intent routing and slot extraction
 
 Implement:
 
@@ -27,7 +27,7 @@ the intent-override scenario.
 The router returns this canonical type directly; it never mutates
 `SessionState`.
 
-### Member B: retrieval and ranking
+### Retrieval and ranking
 
 Implement:
 
@@ -50,7 +50,7 @@ clarifying question when a query is too broad.
 - The exported entry point is `starter/agent.py` with only `reset` and
   `respond` required by the official harness.
 - `top_k` must be exactly 10.
-- Turn 10 is processed; no A/B plugin is called after turn 10.
+- Turn 10 is processed; no internal plugin is called after turn 10.
 - Recommendations are restricted to unique, valid `parent_asin` values from
   the frozen catalog.
 - `ask_attribute` is restricted to the attributes allowed by the contract.
@@ -81,5 +81,5 @@ Run the official public evaluator with:
 python -m evaluator.local_evaluator \
   --catalog data/catalog.jsonl \
   --dataset data/public_set.jsonl \
-  --output results.json
+  --output results/results.json
 ```

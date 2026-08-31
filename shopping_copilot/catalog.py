@@ -1,8 +1,7 @@
 """Offline catalog retriever used as a safe baseline/fallback.
 
-Member B can replace this class with a stronger hybrid retriever.  The public
-Agent contract remains unchanged because the orchestrator consumes only the
-``retrieve`` protocol.
+The public Agent contract remains unchanged because the orchestrator consumes
+only the ``retrieve`` protocol.
 """
 
 from __future__ import annotations
