@@ -1,2 +1,1 @@
-"""Tests for the Shopping Copilot orchestration layer."""
-
+"""Tests for the complete Shopping Copilot pipeline."""
