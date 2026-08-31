@@ -1,1 +1,1 @@
-"""Tests for the complete Shopping Copilot pipeline."""
+"""Tests for the integrated Shopping Copilot project."""

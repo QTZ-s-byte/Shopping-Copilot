@@ -1,21 +1,30 @@
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
 .DS_Store
+Thumbs.db
 .idea/
+.vscode/
 .env
+.env.*
+!.env.example
 results.json
 results-*.json
+*.log
 data/catalog.jsonl
 data/catalog.jsonl.gz
 data/releases/
+build/
+dist/
+*.egg-info/
+
 # Organizer-only code, private evaluation data, manifests, and build reports.
 organizer/
 secure/
-# Internal provenance and release-audit working documents.
 docs/audits/
 docs/data_selection_audit.md
 docs/participant_release_checklist.md
-# Organizer-only pipeline tests.
 tests/test_5core_builder.py
 tests/test_organizer_pipeline.py
-*.log
