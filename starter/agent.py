@@ -25,6 +25,12 @@ class Agent:
         self.using_fallback = False
 
         try:
+            if os.getenv("SHOPPING_COPILOT_FORCE_FALLBACK", "0").lower() in {
+                "1",
+                "true",
+                "yes",
+            }:
+                raise RuntimeError("fallback requested by environment")
             from retrieval.bm25_retriever import BM25Okapi
             from retrieval.semantic_retriever import TfidfVectorizer
 
