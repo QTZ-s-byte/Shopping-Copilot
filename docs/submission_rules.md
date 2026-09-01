@@ -4,8 +4,9 @@ This checklist maps the competition deliverables to repository artifacts.
 
 ## Devpost project description
 
-Use the content in [`PROJECT_DESCRIPTION.md`](../PROJECT_DESCRIPTION.md) as the
-written submission. Before publishing, confirm that it includes:
+The written project description is submitted directly through Devpost and is
+not stored in this source repository. Before publishing, confirm that it
+includes:
 
 - how the solution addresses the problem;
 - development tools;
