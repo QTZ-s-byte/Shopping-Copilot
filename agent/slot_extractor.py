@@ -446,6 +446,15 @@ class SlotExtractor:
         self._feature_regex = _compile_terms(self.features)
         self._use_case_regex = _compile_terms(self.use_case)
         self._category_regex, self._alias_to_category = _compile_alias_map(self.category_aliases)
+        self._all_vocab = (
+            self.brands
+            | self.colors
+            | self.materials
+            | self.styles
+            | self.features
+            | self.use_case
+            | {alias for aliases in self.category_aliases.values() for alias in aliases}
+        )
 
     def extract(self, message: str) -> ExtractedSlots:
         text = _normalize_text(message)
@@ -489,7 +498,7 @@ class SlotExtractor:
         budget_max: Optional[float] = None
 
         between = re.search(
-            r"(?:between\s+)?(?:\$|usd\s*)?(\d+(?:\.\d+)?)\s*(?:-|to|and)\s*(?:\$|usd\s*)?(\d+(?:\.\d+)?)",
+            r"\bbetween\s+(?:\$|usd\s*)?(\d+(?:\.\d+)?)\s*(?:-|to|and)\s*(?:\$|usd\s*)?(\d+(?:\.\d+)?)",
             text,
         )
         if between:
@@ -548,6 +557,8 @@ class SlotExtractor:
         found: List[str] = []
         for match in re.finditer(r"\bsize\s+(\d+(?:\.\d+)?|[a-zA-Z]+)", text):
             found.append(match.group(1).lower())
+        for match in re.finditer(r"\b(\d+(?:\.\d+)?)\s*(US|UK|EU)\b", text):
+            found.append(f"{match.group(1)} {match.group(2).lower()}")
         for label in (
             "extra small",
             "extra large",
@@ -587,7 +598,7 @@ class SlotExtractor:
             text,
         ):
             phrase = match.group(1).strip()
-            if phrase and phrase not in _FLAT_VOCAB:
+            if phrase and phrase not in self._all_vocab:
                 slots.negative_keywords.append(phrase)
         slots.negative_keywords = _dedupe(slots.negative_keywords)
 
