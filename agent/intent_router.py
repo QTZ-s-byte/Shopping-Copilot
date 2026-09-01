@@ -1,5 +1,6 @@
 """Rule-based intent routing with an optional external-LLM enhancement hook."""
 
+import re
 from typing import Callable, Optional, Tuple
 
 from agent.slot_extractor import ExtractedSlots, SlotExtractor
@@ -122,14 +123,28 @@ class IntentRouter:
         slots = self.slot_extractor.extract(user_message)
         override, override_reason = self._detect_override(user_message, state, slots)
         no_preference = self._detect_no_preference(user_message)
-        intent, confidence = self._detect_intent(user_message, slots)
+
+        if no_preference:
+            # A no-preference reply is not a new product intent.
+            # Preserve the current intent and do not add filler words such as
+            # "additional", "preference", or the attribute name as keywords.
+            intent = state.intent or INTENT_BROWSING
+            confidence = 1.0
+            hard_constraints = {}
+            soft_preferences = {}
+            negative_constraints = {}
+        else:
+            intent, confidence = self._detect_intent(user_message, slots)
+            hard_constraints = slots.to_hard_constraints()
+            soft_preferences = slots.to_soft_preferences()
+            negative_constraints = slots.to_negative_constraints()
 
         return IntentResult(
             intent=intent,
             confidence=confidence,
-            hard_constraints=slots.to_hard_constraints(),
-            soft_preferences=slots.to_soft_preferences(),
-            negative_constraints=slots.to_negative_constraints(),
+            hard_constraints=hard_constraints,
+            soft_preferences=soft_preferences,
+            negative_constraints=negative_constraints,
             override=override,
             override_reason=override_reason,
             no_preference=no_preference,
@@ -157,7 +172,22 @@ class IntentRouter:
 
     def _detect_no_preference(self, message: str) -> bool:
         text = message.lower().strip()
-        return any(phrase in text for phrase in NO_PREFERENCE_PHRASES)
+
+        if any(phrase in text for phrase in NO_PREFERENCE_PHRASES):
+            return True
+
+        # Evaluator replies such as:
+        # "I don't have an additional preference for use_case."
+        # should not be interpreted as a new product requirement.
+        normalized = text.replace("'", "")
+        if re.search(
+            r"\bdo\s*nt\s+have\s+(?:an?\s+)?(?:additional\s+)?preference\b",
+            normalized,
+            re.I,
+        ):
+            return True
+
+        return False
 
     def _detect_intent(
         self, message: str, slots: ExtractedSlots

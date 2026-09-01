@@ -48,21 +48,46 @@ class HardConstraintFilter:
         return results
 
     @staticmethod
-    def _constraints(value: SessionState | Mapping[str, Any]) -> dict[str, Any]:
+    def _constraints(
+        value: SessionState | Mapping[str, Any],
+    ) -> dict[str, Any]:
+
         if isinstance(value, SessionState):
             constraints = dict(value.hard_constraints)
-            budget = constraints.get("budget") or {}
-            if isinstance(budget, Mapping):
-                if budget.get("min") is not None:
-                    constraints["price_min"] = budget["min"]
-                if budget.get("max") is not None:
-                    constraints["price_max"] = budget["max"]
-            constraints["negative_constraints"] = dict(value.negative_constraints)
-            constraints["negative_keywords"] = list(
-                value.negative_constraints.get("negative_keywords", []) or []
+
+            constraints["negative_constraints"] = dict(
+                value.negative_constraints
             )
-            return constraints
-        return dict(value)
+
+            constraints["negative_keywords"] = list(
+                value.negative_constraints.get(
+                    "negative_keywords",
+                    [],
+                ) or []
+            )
+
+        else:
+            constraints = dict(value)
+
+        # Canonical budget format:
+        # {
+        #     "budget": {
+        #         "min": ...,
+        #         "max": ...
+        #     }
+        # }
+        #
+        # Internally normalize it to price_min / price_max.
+        budget = constraints.get("budget") or {}
+
+        if isinstance(budget, Mapping):
+            if budget.get("min") is not None:
+                constraints["price_min"] = budget["min"]
+
+            if budget.get("max") is not None:
+                constraints["price_max"] = budget["max"]
+
+        return constraints
 
     def _matches_positive(self, product: Product, constraints: Mapping[str, Any]) -> bool:
         searchable = self._searchable(product)
