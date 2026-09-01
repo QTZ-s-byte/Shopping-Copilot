@@ -1,72 +1,82 @@
-# Integrated Pipeline Contract v1
+# Internal Integration Contract
 
-This document defines the single internal contract shared by the intent,
-retrieval/ranking, and orchestration workstreams. The official evaluator only
-sees `starter.agent.Agent`; all internal components use the types below.
+This document defines the single internal contract used by the integrated
+agent. The official evaluator imports only `starter.agent.Agent`; all internal
+components use the canonical types in `shopping_copilot/contracts.py`.
 
-## Component boundaries
+## Ownership and mutation rules
 
-- The intent component returns classification, slot extraction, and
-  intent-level clarification signals.
-- The retrieval/ranking component returns catalog candidates and scores.
-- The lifecycle component owns session state mutation, fallback, tracing, and
-  evaluation integration.
-- Only the lifecycle component may mutate `SessionState`; other components
-  return structured values and must not mutate the state or catalog.
+- Intent routing returns structured observations and requested state changes.
+- Retrieval reads state and returns catalog-backed candidates.
+- Ranking reads state and candidates and returns a new ordered sequence.
+- The memory layer is the only component allowed to mutate `SessionState`.
+- No component may modify the frozen catalog, evaluator, or public labels.
 
-## Canonical state
+## Canonical session state
 
-`shopping_copilot.contracts.SessionState` is the only session state model. It
-contains the current intent, hard/soft/negative constraints, anonymized profile,
-recent messages, clarification bookkeeping, candidate IDs, turn metadata, and
-completion state.
+`SessionState` contains:
 
-`shopping_copilot.memory.InMemoryContextMemory` is the only state transition
-implementation. It applies `IntentResult`, records a `StateDiff`, and provides
-session isolation, rollback, and request idempotency.
+- session ID and anonymized aggregate profile;
+- current buying/browsing intent;
+- hard, soft, and negative constraints;
+- turn count and bounded recent messages;
+- generated state summary;
+- last candidate IDs;
+- asked and no-preference attributes;
+- completion and version metadata.
 
-## Canonical intent result
+`InMemoryContextMemory` applies all transitions and returns a `StateDiff`.
+Snapshots allow a failed turn to roll back without corrupting the next turn.
 
-The intent component returns `shopping_copilot.contracts.IntentResult`:
+## Intent result
 
 ```python
 IntentResult(
     intent="buying" or "browsing",
     confidence=0.0,
-    hard_constraints={...},
-    soft_preferences={...},
-    negative_constraints={...},
-    remove_fields=(...),
-    replace_fields={...},
+    hard_constraints={},
+    soft_preferences={},
+    negative_constraints={},
+    remove_fields=(),
+    replace_fields={},
     clarification_attribute=None,
+    override=False,
     no_preference=False,
+    no_preference_attributes=(),
     raw=user_message,
 )
 ```
 
-`override=True` is an explanation flag. The actual state operation is
-represented by `remove_fields` and `replace_fields`; C normalizes an A result
-before applying it.
+Additive constraint maps never mutate state directly. `remove_fields` deletes
+all stale copies of a field before additions are applied. `replace_fields`
+represents explicit changes of mind. `override` is explanatory metadata; the
+actual transition remains auditable through remove/replace operations.
 
-## Canonical catalog and candidate
+## Product and candidate
 
-`shopping_copilot.contracts.Product` is the only product record. A candidate
-keeps that Product attached so ranking never needs a second Product model:
+`Product` is the only catalog product model. `Candidate` carries the product
+payload through retrieval and ranking:
 
 ```python
 Candidate(
     parent_asin=product.parent_asin,
     product=product,
     score=final_score,
-    source_scores={"keyword": ..., "semantic": ...},
+    source_scores={
+        "bm25": keyword_score,
+        "tfidf": semantic_score,
+        "category": category_score,
+        "attribute": attribute_score,
+        "popularity": popularity_score,
+    },
     reasons=(...),
 )
 ```
 
-Only `parent_asin` values from the frozen catalog may reach the official
+Only a `parent_asin` found in the frozen catalog may enter the official
 response.
 
-## Retriever and ranker interfaces
+## Retriever protocol
 
 ```python
 class Retriever(Protocol):
@@ -79,6 +89,21 @@ class Retriever(Protocol):
         ...
 ```
 
+`RetrievalResult.candidates` contains a bounded candidate sequence.
+`total_count` represents the number of products surviving the constraint
+filter before candidate truncation, when known. `exhausted` indicates whether
+the returned candidates cover the available set.
+
+Rules:
+
+- hard constraints filter before ranking;
+- negative constraints exclude matching products;
+- soft preferences affect scoring rather than eligibility;
+- internal candidate pools may exceed the official top 10 but remain bounded;
+- retrieval must be deterministic for equal inputs.
+
+## Ranker protocol
+
 ```python
 class Ranker(Protocol):
     def rank(
@@ -90,29 +115,46 @@ class Ranker(Protocol):
         ...
 ```
 
-`top_k=10` is the official response limit. The implementation may retrieve a
-larger internal candidate pool before ranking, but it must return an accurate
-`RetrievalResult.total_count` when possible so C can detect broad queries.
-
-Hard constraints must be enforced before ranking. Negative constraints must
-exclude matching products rather than merely add negative words to a text
-query. Soft preferences affect ranking only unless explicitly promoted by the
-intent policy.
+The ranker may update scores by returning new candidates or consistently
+updating the supplied candidates. It may not introduce an ID outside the input
+candidate set. An optional external reranker must preserve the local order if
+the request fails or returns invalid data.
 
 ## Lifecycle
 
 ```text
 Agent.respond
+  -> validate session, turn, and top_k
   -> read SessionState
-  -> A IntentRouter.classify
-  -> C Memory.apply_turn
-  -> build canonical query
-  -> B Retriever.retrieve
-  -> B Ranker.rank
+  -> IntentRouter.classify
+  -> Memory.apply_turn
+  -> build_query
+  -> Retriever.retrieve
+  -> Ranker.rank
+  -> optional external rerank
   -> validate unique catalog IDs
   -> choose clarification
-  -> emit trace and cache response
+  -> cache response and emit trace
 ```
 
-No component may call the official evaluator, modify the catalog, fabricate an
-ASIN, or make a plugin call after turn 10.
+No pipeline operation may execute after the ten-turn boundary. Duplicate
+requests with the same session, turn, and message return the cached response.
+
+## Official response
+
+```python
+{
+    "message": "Here are the closest matches I found.",
+    "ask_attribute": None,
+    "recommendations": [
+        {"parent_asin": "B000...", "score": 0.91}
+    ],
+    "usage": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+    },
+}
+```
+
+The first ten valid, unique recommendation IDs are scored. `score` is useful
+for debugging but ignored by the official metric calculation.

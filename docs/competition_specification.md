@@ -1,98 +1,130 @@
-# Competition Specification
+# Track 4 Problem and Evaluation Specification
+
+This file summarizes the organizer-provided Track 4 requirements used to build
+and validate this repository. The official competition document remains the
+source of truth if any wording differs.
 
 ## Objective
 
-Build a multi-turn shopping agent that finds a hidden target product as early and as highly ranked as possible.
+Build a multi-turn shopping agent that finds a hidden target product as early
+as possible and ranks it as highly as possible. The target corresponds to a
+real product record, while customer messages are generated from a hidden intent
+card derived from product metadata.
 
-The hidden target is based on a real purchase record from Amazon Reviews 2023. Customer messages are simulated from a hidden intent card derived from product metadata; the source dataset does not contain real shopping conversations.
+## Allowed solution scope
 
-## Scope
+Relevant techniques include:
 
-In scope: keyword, dense, or hybrid retrieval; Buying/Browsing routing; query rewriting; semantic reranking; conversation-state management; clarification strategy; anonymized-profile use; legally accessible LLM APIs or local models.
+- buying/browsing intent routing;
+- query rewriting and structured constraints;
+- keyword, dense, or hybrid retrieval;
+- semantic or model-based reranking;
+- conversation-state management and intent override;
+- adaptive clarification;
+- safe use of the anonymized aggregate profile;
+- failure detection, strategy switching, and offline fallback;
+- transparent recommendation messages.
 
-Out of scope: catalog modification, identifiers outside the frozen catalog, private-label reconstruction, real transactions, mandatory UI work, full-model training, multimodal systems, and infrastructure-heavy vector databases.
+The challenge does not require a graphical interface, real transactions,
+catalog modification, private-label reconstruction, full-model training,
+multimodal processing, or infrastructure-heavy vector databases.
 
-## Official Data
+## Data
 
-The frozen `Clothing_Shoes_and_Jewelry` catalog contains 50,000 products. Participant-visible fields are `parent_asin`, `title`, `features`, `description`, `price`, `categories`, `details`, `average_rating`, `rating_number`, and `store`. Only `parent_asin` is scored.
+The fixed `Clothing_Shoes_and_Jewelry` catalog contains 50,000 products. Visible
+fields include `parent_asin`, `title`, `features`, `description`, `price`,
+`categories`, `details`, `average_rating`, `rating_number`, and `store`. Only
+`parent_asin` is scored.
 
-The public set has 200 labeled development sessions. The organizer keeps 800 sessions private. Private intent cards, ground truth, and simulator state are never sent to the participant Agent.
+The public development set contains 200 sessions; the private evaluation set
+contains 800 sessions. Hidden intent cards, simulator state, and private target
+labels are not sent to the agent.
 
-Direct user identifiers, purchase timestamps, free-text reviews, and raw purchase histories have been removed. The Agent sees only a safe aggregate `user_profile` with purchase-frequency and rating summaries plus controlled preference tags.
+| Scenario | Share | Public sessions |
+|---|---:|---:|
+| Buying | 40% | 80 |
+| Browsing | 40% | 80 |
+| Intent Override | 15% | 30 |
+| Boundary | 5% | 10 |
 
-Both splits use the same fixed scenario mix:
+The agent receives only a safe aggregate `user_profile`; direct identifiers,
+purchase timestamps, raw histories, and free-text reviews are removed.
 
-- 40% Buying: a hard constraint is disclosed early.
-- 40% Browsing: the customer begins vague.
-- 15% Intent Override: an earlier preference is replaced on turn 3 or 4.
-- 5% Boundary: the customer may have no preference for a requested attribute.
+## Session protocol
 
-## Session Protocol
+1. The evaluator creates a random `session_id` and calls
+   `reset(session_id, user_profile)`.
+2. The simulated customer sends the first scenario-dependent message.
+3. The agent returns a natural-language message, a structured clarification
+   attribute, and ranked recommendations.
+4. The evaluator normalizes the first ten valid, unique catalog IDs.
+5. A target hit records its rank and turn; otherwise the simulator generates
+   the next reply.
+6. Intent Override sessions cannot convert before the replacement intent is
+   disclosed.
+7. A session ends after a valid hit or turn 10.
 
-1. The evaluator creates a random `session_id` and calls `reset(session_id, user_profile)`.
-2. The simulated customer sends a scenario-dependent first message.
-3. The Agent returns natural `message`, structured `ask_attribute`, and ranked `recommendations`.
-4. The evaluator scores the first 10 unique catalog-valid `parent_asin` values.
-5. A target hit records rank and turn; otherwise the deterministic customer policy replies.
-6. An Intent Override session cannot convert before the new intent is sent.
-7. The session ends after a valid hit or turn 10.
-
-The simulator policy decides what information to reveal. If natural-language paraphrasing is added by the organizer, it cannot decide correctness. Hits are always exact code matches.
-
-## Required Agent Interface
+## Required interface
 
 ```python
 class Agent:
     def reset(self, session_id: str, user_profile: dict) -> None:
-        pass
+        ...
 
-    def respond(self, session_id: str, user_message: str, turn: int, top_k: int) -> dict:
+    def respond(
+        self,
+        session_id: str,
+        user_message: str,
+        turn: int,
+        top_k: int,
+    ) -> dict:
         return {
             "message": "Do you have a material preference?",
             "ask_attribute": "material",
             "recommendations": [{"parent_asin": "B000..."}],
-            "usage": {"prompt_tokens": 120, "completion_tokens": 30}
+            "usage": {"prompt_tokens": 120, "completion_tokens": 30},
         }
 ```
 
-Rules:
+Response rules:
 
-- `message` is customer-facing natural language.
-- `ask_attribute` is one allowed attribute or `null`; the simulator uses this field instead of guessing from prose.
-- Recommendations are ordered best to worst. Invalid and duplicate IDs are removed; only the first 10 valid unique IDs are scored.
-- An optional numeric recommendation `score` is accepted but ignored.
-- `usage` reports non-negative prompt and completion token counts. It is optional when no model is used.
-- Exceptions, invalid output, and timeouts may count as a miss.
+- `message` is a customer-facing string;
+- `ask_attribute` is an allowed attribute or `null`;
+- recommendations are ordered best to worst;
+- invalid and duplicate IDs are removed;
+- optional recommendation scores are ignored by the evaluator;
+- usage values are non-negative integers when a model is used;
+- exceptions, invalid outputs, and timeouts may count as misses.
+
+Allowed clarification attributes are `category`, `material`, `color`, `size`,
+`style`, `brand`, `budget`, `feature`, `use_case`, and `other`.
 
 ## Metrics
 
 ```text
 HitRate@10 = successful sessions / N
-MRR = sum(1 / target_rank, with misses equal to 0) / N
-MTTC = sum(first_hit_turn, with misses assigned 11) / N
+MRR = sum(1 / target rank, with misses equal to 0) / N
+MTTC = sum(first-hit turn, with misses assigned 11) / N
 Efficiency = clip((11 - MTTC) / 10, 0, 1)
-TechnicalScore = 0.50 × HitRate@10 + 0.30 × MRR + 0.20 × Efficiency
+TechnicalScore = 0.50 * HitRate@10 + 0.30 * MRR + 0.20 * Efficiency
 ```
 
-The same metrics are reported separately for Buying, Browsing, Intent Override, and Boundary sessions. Reported token use and latency are feasibility measures and do not change the core score.
+Metrics are also grouped by Buying, Browsing, Intent Override, and Boundary.
+Token use and latency demonstrate feasibility but do not change the core score.
 
-## Innovation Directions
+## Model and API requirements
 
-- Buying versus Browsing routing and multi-route retrieval
-- hybrid retrieval and semantic reranking
-- structured constraint state, intent override handling, and dynamic context construction
-- adaptive clarification and question-value estimation
-- safe personalization using the aggregate profile
-- failure detection, strategy switching, low latency, and low token cost
-- transparent recommendation explanations
+Teams manage their own legally accessible model credentials. API keys must be
+provided through environment variables and never committed. The submission
+must disclose the model, approximate cost, token usage, latency expectations,
+and fallback behavior. The agent should remain valid if network access is
+unavailable.
 
-## Model and API Policy
+## Required competition deliverables
 
-Teams choose and manage their own model credentials. API keys must be passed through environment variables and never committed. Teams disclose model choice, approximate cost, token usage, latency, and any fallback behavior. The organizer does not need to issue a common API key.
-
-## Final Deliverables
-
-- Source code with setup and reproduction instructions
-- A working Agent using the required interface
-- A short report covering architecture, models, cost, limitations, and team contributions
-- One demonstrated multi-turn session
+- a written project description submitted through Devpost;
+- a public source repository with setup and reproduction instructions;
+- a short public YouTube demo linked from Devpost;
+- a brief report covering architecture, tools, APIs, datasets, results,
+  limitations, and contributions;
+- one demonstrated end-to-end multi-turn session.

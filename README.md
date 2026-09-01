@@ -1,236 +1,325 @@
 # Shopping Copilot
 
-Track 4 submission workspace for TikTok TechJam 2026.  The implementation is
-an offline-first, headless shopping Agent: it routes Buying/Browsing intent,
-maintains structured multi-turn context, retrieves catalog candidates, ranks
-them, and returns the exact interface expected by the public evaluator.
+Shopping Copilot is a multi-turn conversational product-search agent built for
+TikTok TechJam 2026 Track 4. It converts natural-language shopping requests
+into structured intent and constraints, maintains conversation state, retrieves
+products from a fixed 50,000-item catalog, and returns ranked recommendations
+through the evaluator's required Python interface.
 
-## Current C-module implementation
+The system is offline-first. BM25 retrieval and deterministic ranking run
+without network access, SQLite FTS5 provides a lightweight fallback, and an
+optional DeepSeek reranker can improve the ordering of an existing candidate
+set when credentials and network access are available.
 
-The integrated project uses one canonical contract. C owns the lifecycle
-plumbing while A and B provide implementations directly against that contract:
+## Key capabilities
+
+- Buying and browsing intent routing
+- Catalog-derived slot extraction for category, brand, material, color, size,
+  style, budget, feature, and use case
+- Explicit hard, soft, and negative constraints
+- Intent-override, field-removal, and no-preference handling
+- Isolated multi-turn session memory with rollback and idempotent responses
+- Bounded BM25 retrieval with optional TF-IDF candidate reranking
+- Deterministic rule-based ranking using relevance, attributes, and popularity
+- Optional DeepSeek JSON reranking with token accounting and local fallback
+- Validation of catalog IDs, recommendation uniqueness, turn count, and
+  `top_k=10`
+- Public-set evaluation for Hit Rate@10, MRR, MTTC, Efficiency, and
+  TechnicalScore
+
+## Architecture
 
 ```text
 starter.agent.Agent
   -> ShoppingOrchestrator
-       -> IntentRouter
+       -> IntentRouter + SlotExtractor
        -> InMemoryContextMemory
-       -> HybridRetriever + RuleRanker
-       -> TraceSink + fallback/retry policy
+       -> HybridRetriever
+            -> HardConstraintFilter
+            -> BM25Retriever
+            -> optional TFIDFSemanticRetriever
+       -> RuleRanker
+       -> optional DeepSeek LLMRanker
+       -> response validation, tracing, retry, and fallback policies
 ```
 
-The shared contracts are in `shopping_copilot/contracts.py`; see
-`docs/integration_contract_v1.md` for the integration rules. The orchestrator
-enforces the official `top_k=10` contract, rejects a turn beyond 10 without
-calling a plugin, filters duplicate/invalid catalog IDs, supports idempotent
-repeated requests, and never stores secrets in traces. The lightweight SQLite
-FTS5 path is available with `SHOPPING_COPILOT_RETRIEVAL_MODE=sqlite`.
-The in-memory hybrid path is selected with
-`SHOPPING_COPILOT_RETRIEVAL_MODE=hybrid` and uses BM25 by default. TF-IDF
-reranking is enabled independently with `SHOPPING_COPILOT_ENABLE_TFIDF=1`
-because the full 50,000-item matrix increases memory and latency. The two
-retrieval switches use the same `SHOPPING_COPILOT_ENABLE_*` naming convention;
-`SHOPPING_COPILOT_ENABLE_BM25=0` selects the SQLite path. The optional LLM
-ranking boundary is controlled by `SHOPPING_COPILOT_ENABLE_LLM=1` when a
-provider adapter and credentials are configured. `SHOPPING_COPILOT_FORCE_FALLBACK=1`
-always forces SQLite for a deterministic smoke run.
+The evaluator sees only `starter.agent.Agent`. Internal components exchange the
+canonical types in `shopping_copilot/contracts.py`; the complete lifecycle and
+interface rules are documented in [docs/architecture.md](docs/architecture.md)
+and [docs/integration_contract_v1.md](docs/integration_contract_v1.md).
 
-## Official participant kit
+## Repository layout
 
-The public evaluator and public development set are included for local work.
-The 50,000-item catalog is intentionally ignored by Git.  Download
-`catalog.jsonl.gz` from the official `participant-kit` release, verify the
-published SHA256, and decompress it to `data/catalog.jsonl`.
+```text
+agent/               intent routing, slot extraction, clarification policy
+data/                public development sessions and catalog vocabulary
+docs/                architecture, contract, specification, submission notes
+evaluation/          evaluator adapter and reusable metric functions
+evaluator/           public local evaluator
+ranking/             deterministic product ranking
+retrieval/           filtering, BM25, and optional TF-IDF retrieval
+scripts/             vocabulary builder and interactive session runner
+shopping_copilot/    canonical contracts, memory, orchestration, trace, LLM
+starter/             official Agent entry point
+tests/               unit, integration, and retrieval benchmark coverage
+```
 
-The expected catalog checksum is:
+## Requirements
+
+- Python 3.10 or newer
+- The official 50,000-item `Clothing_Shoes_and_Jewelry` catalog
+- Optional: a DeepSeek API key for model-based reranking
+
+Python dependencies are declared in `requirements.txt`:
+
+- `rank-bm25`
+- `scikit-learn`
+- `python-dotenv`
+- `pytest`
+
+The fallback retriever uses Python's standard-library SQLite FTS5 support; the
+normal repository installation still includes `python-dotenv` for configuration.
+
+## Setup
+
+Clone the public repository and create a virtual environment:
+
+```bash
+git clone https://github.com/QTZ-s-byte/Shopping-Copilot.git
+cd Shopping-Copilot
+python -m venv .venv
+```
+
+Activate the environment on Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+On macOS or Linux:
+
+```bash
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+## Prepare the official catalog
+
+The large catalog is not committed to Git. Download `catalog.jsonl.gz` from the
+organizer-provided participant kit, place it in `data/`, and verify its SHA256:
 
 ```text
 07fd142631fd6b03e2b4d09988c3eb7d53720e9d57010c79db48eeaada50a8f8
 ```
 
-Python 3.10+ is recommended. No third-party Python dependency is required by
-the SQLite path; the hybrid path uses the packages in `requirements.txt`.
-
-## Reproducible Windows setup
-
-Run these commands in PowerShell from the repository root. The bundled runtime
-path below is the runtime used in the development environment; replace it with
-your own Python 3.10+ executable if needed.
+PowerShell verification and decompression:
 
 ```powershell
-$py = 'C:\Users\16349\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
-& $py --version
-& $py -m pip install -r requirements.txt
+(Get-FileHash data\catalog.jsonl.gz -Algorithm SHA256).Hash.ToLower()
+python -c "import gzip,shutil; shutil.copyfileobj(gzip.open('data/catalog.jsonl.gz','rb'), open('data/catalog.jsonl','wb'))"
 ```
 
-The official catalog is not committed because it is large. Download
-`catalog.jsonl.gz` from the official `participant-kit` release, place it under
-`data\`, verify the published SHA256, and decompress it to
-`data\catalog.jsonl`:
+macOS/Linux verification and decompression:
 
-```powershell
-$catalogGz = 'data\catalog.jsonl.gz'
-(Get-FileHash $catalogGz -Algorithm SHA256).Hash.ToLower()
-& $py -c "import gzip,shutil; src='data/catalog.jsonl.gz'; dst='data/catalog.jsonl'; shutil.copyfileobj(gzip.open(src,'rb'), open(dst,'wb'))"
+```bash
+sha256sum data/catalog.jsonl.gz
+gzip -dc data/catalog.jsonl.gz > data/catalog.jsonl
 ```
 
-The expected checksum is shown in the participant-kit section above. Do not
-commit either catalog file; both are ignored by Git.
+The expected output file is `data/catalog.jsonl` with 50,000 products. Catalog
+files, local results, `.env`, and API credentials are ignored by Git.
+
+## Retrieval modes
+
+The agent exposes three intentional execution modes through consistently named
+environment variables.
+
+| Mode | Configuration | Purpose |
+|---|---|---|
+| SQLite fallback | `SHOPPING_COPILOT_RETRIEVAL_MODE=sqlite` | Lightweight deterministic baseline |
+| BM25 hybrid path | retrieval mode `hybrid`, BM25 `1`, TF-IDF `0` | Recommended offline path |
+| BM25 + TF-IDF | retrieval mode `hybrid`, BM25 `1`, TF-IDF `1` | Higher-memory semantic candidate reranking |
+
+Use the complete variable names shown below:
+
+```dotenv
+SHOPPING_COPILOT_RETRIEVAL_MODE=hybrid
+SHOPPING_COPILOT_ENABLE_BM25=1
+SHOPPING_COPILOT_ENABLE_TFIDF=0
+SHOPPING_COPILOT_ENABLE_LLM=0
+```
+
+Setting `SHOPPING_COPILOT_ENABLE_BM25=0` or
+`SHOPPING_COPILOT_FORCE_FALLBACK=1` selects the SQLite path.
 
 ## Run the public evaluator
 
-From the repository root:
-
-```powershell
-$env:SHOPPING_COPILOT_RETRIEVAL_MODE='hybrid'
-$env:SHOPPING_COPILOT_ENABLE_BM25='1'
-$env:SHOPPING_COPILOT_ENABLE_TFIDF='0'
-& $py -m evaluator.local_evaluator `
-  --catalog data/catalog.jsonl `
-  --dataset data/public_set.jsonl `
-  --output results/results.json
-```
-
-On PowerShell, use backticks for line continuation (or put the command on one
-line). This invokes the same public `Agent.reset`/`Agent.respond` contract used
-by the judge. Evaluation reports are written under `results\` by default; the
-directory is ignored by Git so local reports never pollute the repository root.
-
-The evaluator is the source of truth for scoring.  It calls:
+The evaluator uses the same interface as the judging harness:
 
 ```python
 Agent.reset(session_id, user_profile)
 Agent.respond(session_id, user_message, turn, 10)
 ```
 
-Only the first 10 valid, unique `parent_asin` values are scored.  Hits are
-exact catalog-ID matches.  The official metrics are Hit Rate@10, MRR, MTTC,
-Efficiency, and the recommended TechnicalScore.
-
-## Integrated Members A/B implementations
-
-Member A should implement:
-
-```python
-class IntentRouter:
-    def classify(self, user_message: str, state: SessionState) -> IntentResult:
-        ...
-```
-
-Member B should implement:
-
-```python
-class Retriever:
-    def retrieve(self, query: str, state: SessionState, top_k: int):
-        ...
-
-class Ranker:
-    def rank(self, query: str, candidates: list[Candidate], state: SessionState):
-        ...
-```
-
-These implementations are wired directly by `starter/agent.py`. They use the
-canonical types in `shopping_copilot/contracts.py`; the retriever returns a
-`RetrievalResult` with `total_count` so the C lifecycle can detect broad-query
-clarification cases.
-
-## Tests
-
-Use the bundled Python runtime or any Python 3.10+ installation:
-
-```powershell
-& $py -m unittest discover -s tests -v
-& $py -m pytest -q
-```
-
-The tests cover state accumulation/removal/replacement, bounded history,
-idempotency, invalid catalog IDs, broad-query clarification, ranker failure
-fallback, the 10-turn boundary, and the official metric formulas.
-
-## Manual user-style session
-
-After the catalog has been decompressed, start an interactive ten-turn session:
-
-```powershell
-& $py scripts/manual_session.py --catalog data/catalog.jsonl
-```
-
-Type one natural-language shopping request per line. The script prints the
-assistant message, any clarification question, and the returned catalog IDs.
-Press Enter on an empty line to exit. This uses the same public `Agent` class
-as the evaluator and therefore exercises the real orchestrator and memory.
-
-To exercise the indexed hybrid retrieval locally, opt in explicitly:
+Run the recommended offline BM25 configuration on all 200 public sessions:
 
 ```powershell
 $env:SHOPPING_COPILOT_RETRIEVAL_MODE='hybrid'
 $env:SHOPPING_COPILOT_ENABLE_BM25='1'
 $env:SHOPPING_COPILOT_ENABLE_TFIDF='0'
-& $py scripts/manual_session.py --catalog data/catalog.jsonl
+$env:SHOPPING_COPILOT_ENABLE_LLM='0'
+python -m evaluator.local_evaluator `
+  --catalog data/catalog.jsonl `
+  --dataset data/public_set.jsonl `
+  --output results/hybrid-bm25.json
 ```
 
-Semantic retrieval is intentionally opt-in because it consumes substantially
-more memory on the 50,000-item catalog.
+Equivalent one-line command for any shell:
+
+```bash
+python -m evaluator.local_evaluator --catalog data/catalog.jsonl --dataset data/public_set.jsonl --output results/hybrid-bm25.json
+```
+
+Only the first ten valid, unique `parent_asin` values are scored. Evaluation
+reports are written under the ignored `results/` directory.
 
 ## Optional DeepSeek reranking
 
-DeepSeek integration uses the official OpenAI-compatible Chat Completions
-endpoint. Copy the committed template to the ignored local `.env` file:
+The model adapter uses DeepSeek's OpenAI-compatible Chat Completions endpoint.
+Copy the environment template and add the key locally:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Then edit only the following line in `.env` and keep the key local:
-
 ```dotenv
+SHOPPING_COPILOT_RETRIEVAL_MODE=hybrid
+SHOPPING_COPILOT_ENABLE_BM25=1
+SHOPPING_COPILOT_ENABLE_TFIDF=0
+SHOPPING_COPILOT_ENABLE_LLM=1
+
 DEEPSEEK_API_KEY=replace-with-your-private-key
-```
-
-The template is otherwise ready for the 200-session run. It enables hybrid
-BM25 retrieval, disables TF-IDF, enables DeepSeek reranking, and uses:
-
-```dotenv
 DEEPSEEK_BASE_URL=https://api.deepseek.com/chat/completions
 DEEPSEEK_MODEL=deepseek-v4-flash
 DEEPSEEK_TIMEOUT_SECONDS=30
 DEEPSEEK_MAX_CALLS_PER_SESSION=1
 ```
 
-The one-call-per-session limit caps the public evaluation at 200 attempted API
-calls. DeepSeek token usage is copied into the official response `usage`
-field. API failures preserve the deterministic local ranking order. The `.env`
-file is ignored by Git and must never be committed or pasted into logs.
+Never commit `.env` or print the key in logs. The default call budget permits
+at most one attempted model rerank per session. API failures preserve the
+deterministic local ranking, and successful response token counts are returned
+through the official `usage` field.
 
-Clear shell-level overrides when finished:
+Run the same evaluator command after enabling the model, using a distinct
+output file such as `results/deepseek-hybrid-200.json`.
 
-```powershell
-Remove-Item Env:SHOPPING_COPILOT_RETRIEVAL_MODE -ErrorAction SilentlyContinue
-Remove-Item Env:SHOPPING_COPILOT_ENABLE_BM25 -ErrorAction SilentlyContinue
-Remove-Item Env:SHOPPING_COPILOT_ENABLE_TFIDF -ErrorAction SilentlyContinue
-Remove-Item Env:SHOPPING_COPILOT_ENABLE_LLM -ErrorAction SilentlyContinue
+## Recorded public-set results
+
+These are local development results on the 200-session public set, not private
+leaderboard scores. The public set contains 80 Buying, 80 Browsing, 30 Intent
+Override, and 10 Boundary sessions.
+
+| Configuration | Hit Rate@10 | MRR | MTTC | Efficiency | TechnicalScore |
+|---|---:|---:|---:|---:|---:|
+| SQLite FTS5 fallback | 0.715 | 0.180373 | 7.065 | 0.3935 | 0.490312 |
+| Hybrid BM25 | 0.655 | 0.425200 | 7.290 | 0.3710 | 0.529260 |
+| Hybrid BM25 + DeepSeek | 0.655 | 0.437046 | 7.290 | 0.3710 | 0.532814 |
+
+The DeepSeek run used 295,624 prompt tokens and 17,577 completion tokens
+(313,201 total). Using the published `deepseek-v4-flash` cache-miss rates on
+1 September 2026, the approximate API cost is USD 0.077 off-peak or USD 0.153
+at peak rates. Provider pricing may change; consult the
+[official pricing page](https://api-docs.deepseek.com/quick_start/pricing/)
+before reproducing the estimate.
+
+## Manual end-to-end session
+
+Run the interactive client against the real agent:
+
+```bash
+python scripts/manual_session.py --catalog data/catalog.jsonl
 ```
 
-## Track 4 constraints kept by this code
+Enter one shopping message per line. The script prints the customer-facing
+message, structured clarification attribute, and ranked catalog IDs. Press
+Enter on an empty line to exit.
 
-- maximum 10 turns per session;
-- read-only catalog and no fabricated ASINs;
-- in-memory session context and lightweight local indexing;
-- text-only, single-user evaluation;
-- no required UI or hosted model dependency;
-- model/API usage can be added behind an offline fallback and must use
-  environment variables rather than committed credentials.
+Example conversation:
 
-## Trace format
+```text
+User: I need waterproof hiking shoes under $100.
+Agent: returns ranked products and may ask for a missing high-value attribute.
+User: Actually, forget the black color; make them blue instead.
+Agent: removes the stale value and returns a new valid top-10 ranking.
+```
 
-`InMemoryTraceSink` is useful for tests and `JSONLTraceSink` can be enabled for
-development.  Events include a session/request digest, turn, intent change,
-state diff, candidate count, ask attribute, latency, retries, fallback stages,
-and errors.  Raw messages and secrets are not written by default.
+## Tests
 
-## Local result captured during the offline smoke testing
+```bash
+python -m pytest -q
+python -m unittest discover -s tests -v
+```
 
-With the SQLite mode on the public 200-session set, the smoke run completed
-successfully. The hybrid BM25 mode also completes after indexed retrieval
-optimization and produces a stronger ranking baseline. TF-IDF and LLM ranking
-remain opt-in because their resource use depends on the catalog and provider.
+The suite covers intent and slot extraction, no-preference and override state
+transitions, hard and negative filtering, retrieval and ranking, rollback,
+request idempotency, invalid-ID filtering, fallback behavior, trace redaction,
+turn boundaries, and official metric formulas.
+
+## Limitations and future improvements
+
+- The rule-based intent and slot extractor cannot cover every paraphrase,
+  implicit preference, or ambiguous product phrase.
+- BM25 defines the primary candidate-recall ceiling; an LLM reranker cannot
+  recover a target that retrieval did not include.
+- TF-IDF is lexical rather than a true dense embedding model and consumes more
+  memory on the full catalog.
+- The anonymized `user_profile` is preserved in session state but is not yet
+  converted into calibrated ranking features.
+- The one-call-per-session LLM policy may spend its call before an important
+  clarification or intent override arrives.
+- The public development set is small, so aggressive tuning risks overfitting
+  the 200 visible sessions.
+- There is no graphical interface; the official Python API and terminal
+  walkthrough are the intended demonstration surfaces.
+
+Given more time, we would add stage-level recall diagnostics, catalog-field
+inverted indexes, value-aware clarification, safe profile-derived soft
+features, state-aware LLM call scheduling, and a dense retriever evaluated
+against latency and memory budgets.
+
+## Data and security
+
+The competition data is derived from the
+[Amazon Reviews 2023](https://amazon-reviews-2023.github.io/)
+`Clothing_Shoes_and_Jewelry` category. The project uses product metadata and
+anonymized aggregate profiles only. It does not use direct identifiers, raw
+review text, purchase timestamps, or private evaluation sessions. See
+[DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md).
+
+Secrets are loaded only from environment variables. `.env`, catalog files,
+result reports, logs, and organizer-only artifacts are excluded by
+`.gitignore`.
+
+## Team contributions
+
+- [**YUino-t**](https://github.com/YUino-t) — **Tao Junmin**: intent routing,
+  catalog-aware slot extraction, vocabulary generation, clarification signals,
+  intent override, no-preference behavior, and intent/state tests.
+- [**IMMORTALS-TQM**](https://github.com/IMMORTALS-TQM) — **Qi Zihan**: BM25
+  and TF-IDF retrieval, hard and negative filtering, candidate construction,
+  deterministic ranking, retrieval performance work, and retrieval/ranking
+  tests and benchmarks.
+- [**LordRosan**](https://github.com/LordRosan) — **Zhou Moyu**: canonical
+  contracts, orchestration, session memory, evaluation and metrics, tracing,
+  fallback and configuration paths, DeepSeek integration, cross-component
+  integration, repository documentation, and release preparation.
+
+Contribution details can be verified from the repository's commit and merge
+history.
+
+## License
+
+Released under the [MIT License](LICENSE).

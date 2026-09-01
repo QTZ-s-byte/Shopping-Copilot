@@ -1,103 +1,119 @@
-# Submission Rules
+# Submission and Reproduction Checklist
 
-This document defines the participant submission requirements for the
-TechJam Conversational E-Commerce Search Challenge.
+This checklist maps the competition deliverables to repository artifacts.
 
-## What Teams Must Submit
+## Devpost project description
 
-Each team must submit:
+Use the content in [`PROJECT_DESCRIPTION.md`](../PROJECT_DESCRIPTION.md) as the
+written submission. Before publishing, confirm that it includes:
 
-- one Python agent entry file exporting `Agent`
-- any required local helper modules
-- setup instructions
-- a short report describing method, model choice, and limitations
-- a disclosure of latency, token usage, and estimated model cost
+- how the solution addresses the problem;
+- development tools;
+- APIs;
+- libraries and frameworks;
+- datasets and assets;
+- architecture and evaluation results;
+- limitations and planned improvements;
+- the public repository URL;
+- the public YouTube demo URL when available.
 
-## Required Interface
+## Public repository
 
-Your submission must export:
-
-```python
-class Agent:
-    def reset(self, session_id: str, user_profile: dict) -> None:
-        ...
-
-    def respond(self, session_id: str, user_message: str, turn: int, top_k: int) -> dict:
-        return {
-            "message": "Do you have a material preference?",
-            "ask_attribute": "material",
-            "recommendations": [{"parent_asin": "B000..."}],
-            "usage": {"prompt_tokens": 120, "completion_tokens": 30}
-        }
-```
-
-## Allowed Submission Contents
-
-You may include:
-
-- Python source files
-- small local config files
-- lightweight local assets required by your agent
-- dependency manifest and install instructions
-
-## Disallowed Submission Contents
-
-Do not include:
-
-- private evaluation data
-- copied organizer-only files
-- API keys or secrets
-- code that requires privileged host access
-- code that modifies evaluator files
-- code that depends on undeclared external services for official final scoring
-
-## Model Policy
-
-Teams may prototype with any legally accessible LLM API or local model during
-development.
-
-For official final scoring, organizer policy may disable network access.
-Therefore:
-
-- your submission must clearly document whether it requires network access
-- if your system has an offline fallback, describe it
-- if your system cannot run without live credentials, say so explicitly
-
-## Output Rules
-
-Your `respond(...)` output must follow these rules:
-
-- `message` must be a string
-- `ask_attribute` must be one allowed attribute or `null`
-- `recommendations` must be ordered best to worst
-- only the first 10 valid unique `parent_asin` values are scored
-- `usage` should report non-negative token counts when available
-
-## Reproducibility Requirements
-
-Your submission package must contain:
-
-- exact Python version requirement if non-default
-- dependency installation steps
-- one command to run the agent in the official harness
-- any non-obvious environment variables
-
-If your code cannot be reproduced from the submitted bundle and instructions,
-the organizer may treat the run as invalid.
-
-## Recommended File Layout
+Repository URL:
 
 ```text
-submission/
-  agent.py
-  requirements.txt
-  README.md
-  src/
+https://github.com/QTZ-s-byte/Shopping-Copilot
 ```
 
-## Final Notes
+Required public contents:
 
-- The organizer reserves the right to run your submission under CPU, memory,
-  timeout, and network restrictions.
-- The organizer will score only the frozen official artifacts and the output
-  produced by your submitted code in that environment.
+- complete, commented source code;
+- `README.md` with overview, setup, reproduction, limitations, and team
+  contributions;
+- `requirements.txt`;
+- public development sessions and small vocabulary assets;
+- official `starter.agent.Agent` entry point;
+- tests and evaluator instructions;
+- dataset attribution and MIT license.
+
+Do not commit:
+
+- `.env` or any API key;
+- the large catalog archive or decompressed catalog;
+- local evaluation result files and logs;
+- organizer-only code or private evaluation data;
+- credentials, direct user identifiers, or raw purchase histories.
+
+## Required interface verification
+
+```python
+from starter.agent import Agent
+
+agent = Agent("data/catalog.jsonl")
+agent.reset(session_id, user_profile)
+response = agent.respond(session_id, user_message, turn, 10)
+```
+
+Verify that every response has:
+
+- a string `message`;
+- a valid `ask_attribute` or `None`;
+- ordered recommendations containing catalog-valid `parent_asin` values;
+- no duplicate IDs in the scored top 10;
+- non-negative integer usage counters.
+
+## Reproduction commands
+
+```bash
+python -m pip install -r requirements.txt
+python -m pytest -q
+python -m evaluator.local_evaluator --catalog data/catalog.jsonl --dataset data/public_set.jsonl --output results/results.json
+python scripts/manual_session.py --catalog data/catalog.jsonl
+```
+
+The catalog must first be obtained from the official participant kit and
+decompressed to `data/catalog.jsonl` as described in the README.
+
+## External model disclosure
+
+The optional external provider is DeepSeek:
+
+```text
+API: OpenAI-compatible Chat Completions
+Model: deepseek-v4-flash
+Credential: DEEPSEEK_API_KEY in ignored local .env
+Default call budget: one attempted rerank per session
+Fallback: preserve deterministic RuleRanker order
+```
+
+The recorded 200-session run used 313,201 total tokens. Consult the current
+DeepSeek pricing page when finalizing the cost estimate because provider rates
+may change.
+
+## Demo video
+
+The video must:
+
+- demonstrate the real agent end to end;
+- show setup or environment configuration without exposing credentials;
+- include at least one multi-turn request and one intent change or
+  clarification;
+- show ranked catalog IDs and/or evaluator results;
+- be uploaded to YouTube with public visibility;
+- avoid unlicensed third-party trademarks and copyrighted media;
+- be linked from the Devpost description.
+
+A terminal walkthrough is acceptable because this is a backend/NLP track.
+
+## Final pre-submission checks
+
+- [ ] Repository visibility is public.
+- [ ] `main` contains the final integrated code.
+- [ ] Tests pass from a clean environment.
+- [ ] Catalog setup and checksum instructions are correct.
+- [ ] Evaluation command writes under `results/`.
+- [ ] No `.env`, API key, catalog, or result file is tracked.
+- [ ] README limitations and contributions are present.
+- [ ] Devpost description contains the repository link.
+- [ ] Public YouTube link is added to Devpost.
+- [ ] Devpost submission is completed before the deadline.
